@@ -9,6 +9,7 @@ import com.dd.plist.PropertyListParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -42,7 +43,8 @@ class AirPlay2ClientIntegrationTest {
                 ?: throw AssertionError("event SETUP request was never captured")
             val eventDict = PropertyListParser.parse(ByteArrayInputStream(eventPlist)) as NSDictionary
             assertTrue("timingProtocol key present in event SETUP", eventDict["timingProtocol"] != null)
-            assertEquals("PTP", eventDict["timingProtocol"].toString())
+            assertEquals("NTP", eventDict["timingProtocol"].toString())
+            assertFalse("default client must not have started the PTP clock", client.clockStarted)
 
             // --- Audio SETUP plist: byte-exact assertions on captured bytes ---
             val audioPlist = receiver.audioSetupPlist()
@@ -89,6 +91,33 @@ class AirPlay2ClientIntegrationTest {
             // --- Volume body format: 'volume: <float 0..1>' ---
             val volumeBody = String(receiver.setParameterBody() ?: ByteArray(0))
             assertTrue("SET_PARAMETER body must start with 'volume: '", volumeBody.startsWith("volume: "))
+        } finally {
+            client.disconnect()
+            receiver.stop()
+        }
+    }
+
+    @Test
+    fun `PTP mode advertises PTP and starts the master clock`() = runBlocking {
+        val receiver = MockAp2Receiver()
+        receiver.start()
+        val client = AirPlay2Client("127.0.0.1", receiver.port, TimingMode.PTP)
+        try {
+            client.connect()
+            assertTrue("pair() must succeed against the mock receiver", client.pair())
+            // A 319/320 bind failure in the test JVM must not fail the test:
+            // assert the mode-specific behavior regardless.
+            try {
+                client.setupStreaming()
+            } catch (e: Exception) {
+                // fall through: assert flags below
+            }
+
+            val eventPlist = receiver.eventSetupPlist()
+                ?: throw AssertionError("event SETUP request was never captured")
+            val eventDict = PropertyListParser.parse(ByteArrayInputStream(eventPlist)) as NSDictionary
+            assertEquals("PTP", eventDict["timingProtocol"].toString())
+            assertTrue("PTP mode must start the master clock", client.clockStarted)
         } finally {
             client.disconnect()
             receiver.stop()

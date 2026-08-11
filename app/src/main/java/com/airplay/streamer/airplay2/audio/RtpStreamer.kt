@@ -53,6 +53,12 @@ class RtpStreamer(
     private val prebufferTimeoutMs: Long = DEFAULT_PREBUFFER_TIMEOUT_MS,
     /** Single monotonic clock used for anchor timestamps (injectable for tests). */
     private val timeSource: () -> Long = System::nanoTime,
+    /**
+     * Clock offset (ns) added to [timeSource] when stamping anchor packet
+     * times, converting local time into the receiver clock frame in NTP
+     * timing mode. Default 0 keeps PTP/current behavior identical.
+     */
+    internal var anchorOffsetNs: () -> Long = { 0L },
     /** Injectable packet sink; defaults to real UDP sockets (injectable for byte-exact tests). */
     private val transport: RtpTransport? = null
 ) {
@@ -147,7 +153,7 @@ class RtpStreamer(
      * never from a wall clock.
      */
     fun sendSentinelAnchor(clockId: Long) {
-        val ptpTimeNs = timeSource() + 2_000_000_000L // 2 seconds in future
+        val ptpTimeNs = timeSource() + anchorOffsetNs() + 2_000_000_000L // 2 seconds in future
         sendAnchorPacket(rtpTimestamp, ptpTimeNs, clockId, isSentinel = true)
     }
 
@@ -254,7 +260,7 @@ class RtpStreamer(
 
         // Send anchor packet periodically (~every 1 second = 125 packets)
         if (sendAnchor && sequenceNumber % ANCHOR_INTERVAL_FRAMES == 0) {
-            sendAnchorPacket(rtpTimestamp, timeSource() + 2_000_000_000L, clockId)
+            sendAnchorPacket(rtpTimestamp, timeSource() + anchorOffsetNs() + 2_000_000_000L, clockId)
         }
     }
 }

@@ -12,7 +12,15 @@ import com.dd.plist.PropertyListParser
 import kotlinx.coroutines.*
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
+import com.airplay.streamer.airplay2.util.Ap2Log
+import com.airplay.streamer.airplay2.timing.NtpTiming
+
+/** Timing protocol advertised to the receiver in the event-channel SETUP. */
+enum class TimingMode { NTP, PTP }
 
 /**
  * AirPlay 2 Client
@@ -32,12 +40,23 @@ import java.util.UUID
  */
 class AirPlay2Client(
     private val host: String,
-    private val port: Int = 7000
+    private val port: Int = 7000,
+    private val timingMode: TimingMode = TimingMode.NTP
 ) {
     private val rtspClient = RtspClient(host, port)
     private val pairing = TransientPairing(rtspClient)
     private var ptpClock: PtpMasterClock? = null
     private var rtpStreamer: RtpStreamer? = null
+    
+    /** True once the PTP master clock is started (PTP mode only). */
+    internal var clockStarted: Boolean = false
+        private set
+
+    /** Latest NTP clock offset (receiver clock = local clock + offset), ns. */
+    private val latestOffsetNs = AtomicLong(0L)
+
+    private var ntpResponderJob: kotlinx.coroutines.Job? = null
+    private var ntpTimingSocket: DatagramSocket? = null
     
     private var sessionUuid: String? = null
     private var eventPort: Int = 0
@@ -59,6 +78,9 @@ class AirPlay2Client(
      * Disconnect and cleanup
      */
     fun disconnect() {
+        ntpResponderJob?.cancel()
+        ntpTimingSocket?.close()
+        ntpTimingSocket = null
         ptpClock?.stop()
         rtpStreamer?.close()
         rtspClient.stopFeedback()
@@ -81,15 +103,20 @@ class AirPlay2Client(
         // Step 1: Setup event channel (PTP timing)
         eventPort = setupEventChannel()
         
-        // Step 2: Start PTP master clock
-        ptpClock = PtpMasterClock(host).apply {
-            start(scope)
+        // Step 2: Start timing master (PTP clock or NTP responder)
+        if (timingMode == TimingMode.PTP) {
+            ptpClock = PtpMasterClock(host).apply {
+                start(scope)
+            }
+            clockStarted = true
+
+            // Wait for clock to establish
+            delay(500)
+            ptpClock?.sendAnnounceBurst()
+            delay(500)
+        } else {
+            startNtpTimingResponder()
         }
-        
-        // Wait for clock to establish
-        delay(500)
-        ptpClock?.sendAnnounceBurst()
-        delay(500)
         
         // Step 3: Setup audio stream
         val (ctrl, data, secret) = setupAudioStream()
@@ -120,6 +147,9 @@ class AirPlay2Client(
             init()
             setStarting(0, 0) // Match FLUSH
         }
+        if (timingMode == TimingMode.NTP) {
+            rtpStreamer!!.anchorOffsetNs = { latestOffsetNs.get() }
+        }
         
         sentinelSent = false
         
@@ -138,7 +168,7 @@ class AirPlay2Client(
         val setupBody = NSDictionary().apply {
             put("deviceID", "AA:BB:CC:DD:EE:FF")
             put("sessionUUID", sessionUuid)
-            put("timingProtocol", "PTP")
+            put("timingProtocol", if (timingMode == TimingMode.PTP) "PTP" else "NTP")
             put("timingPeerInfo", NSDictionary().apply {
                 put("Addresses", arrayOf(rtspClient.getLocalAddress() ?: getLocalIp()))
                 put("ID", "AA:BB:CC:DD:EE:FF")
@@ -321,5 +351,63 @@ class AirPlay2Client(
      */
     private fun getLocalIp(): String {
         return com.airplay.streamer.airplay2.util.NetworkUtils.getLocalIpAddress()
+    }
+
+    /**
+     * Bind a UDP responder for the AirPlay 2 NTP timing exchange (PT 82/83).
+     *
+     * Answers NTP-style requests from the receiver, stamping the origin and
+     * receive timestamps in the local clock frame and deriving the clock
+     * offset via [NtpTiming.offsetFromTimingExchange] for anchor stamping.
+     */
+    private fun startNtpTimingResponder() {
+        ntpResponderJob = scope.launch(Dispatchers.IO) {
+            val socket = DatagramSocket()
+            ntpTimingSocket = socket
+            Ap2Log.d("AirPlay2Client", "NTP timing responder bound on port ${socket.localPort}")
+            try {
+                val buffer = ByteArray(128)
+                while (isActive) {
+                    val packet = DatagramPacket(buffer, buffer.size)
+                    socket.receive(packet)
+                    if (packet.length >= 32) {
+                        val req = packet.data
+                        val resp = ByteArray(packet.length)
+                        System.arraycopy(req, 0, resp, 0, 8)
+                        resp[1] = (0x53 or 0x80).toByte()
+                        System.arraycopy(req, 24, resp, 8, 8)
+                        val nowMs = System.currentTimeMillis()
+                        val ntpSec = (nowMs / 1000) + 2208988800L
+                        val ntpFrac = (((nowMs % 1000) * 4294967296L) / 1000)
+                        writeNtpTimestamp(resp, 16, ntpSec, ntpFrac)
+                        writeNtpTimestamp(resp, 24, ntpSec, ntpFrac)
+                        socket.send(DatagramPacket(resp, packet.length, packet.address, packet.port))
+                        val t1 = ntpToNanos(req, 24)
+                        val t2 = System.nanoTime()
+                        val t3 = t2
+                        val t4 = t2 // receiver-side t4 not observable by responder; ~t2
+                        latestOffsetNs.set(NtpTiming.offsetFromTimingExchange(t1, t2, t3, t4))
+                    }
+                }
+            } catch (e: Exception) {
+                if (!socket.isClosed) Ap2Log.d("AirPlay2Client", "NTP responder stopped: ${e.message}")
+            } finally {
+                socket.close()
+                ntpTimingSocket = null
+            }
+        }
+    }
+
+    private fun writeNtpTimestamp(b: ByteArray, o: Int, s: Long, f: Long) {
+        b[o] = (s shr 24).toByte(); b[o + 1] = (s shr 16).toByte(); b[o + 2] = (s shr 8).toByte(); b[o + 3] = s.toByte()
+        b[o + 4] = (f shr 24).toByte(); b[o + 5] = (f shr 16).toByte(); b[o + 6] = (f shr 8).toByte(); b[o + 7] = f.toByte()
+    }
+
+    private fun ntpToNanos(req: ByteArray, o: Int): Long {
+        val sec = ((req[o].toLong() and 0xFF) shl 24) or ((req[o + 1].toLong() and 0xFF) shl 16) or
+            ((req[o + 2].toLong() and 0xFF) shl 8) or (req[o + 3].toLong() and 0xFF)
+        val frac = ((req[o + 4].toLong() and 0xFF) shl 24) or ((req[o + 5].toLong() and 0xFF) shl 16) or
+            ((req[o + 6].toLong() and 0xFF) shl 8) or (req[o + 7].toLong() and 0xFF)
+        return sec * 1_000_000_000L + (frac * 1_000_000_000L) / 0x1_0000_0000L
     }
 }
