@@ -38,7 +38,8 @@ class Chacha20CipherTest {
             "92 dd bd 7f 2d 77 8b 8c 98 03 ae e3 28 09 1b 58" +
             "fa b3 24 e4 fa d6 75 94 55 85 80 8b 48 31 d7 bc" +
             "3f f4 de f0 8e 4b 7a 9d e5 76 d2 65 86 ce c6 4b" +
-            "61 16"
+            "61 16" +
+            "1a e1 0b 59 4f 09 e2 6a 7e 90 2e cb d0 60 06 91"
     )
     private val expectedTag = hex("1a e1 0b 59 4f 09 e2 6a 7e 90 2e cb d0 60 06 91")
 
@@ -50,7 +51,7 @@ class Chacha20CipherTest {
         assertEquals("output must be ciphertext (114) + tag (16) = 130 bytes", 130, out.size)
         assertArrayEquals(
             "RFC 8439 A.5 ciphertext+tag mismatch",
-            expectedCiphertextAndTag + expectedTag,
+            expectedCiphertextAndTag,
             out
         )
     }
