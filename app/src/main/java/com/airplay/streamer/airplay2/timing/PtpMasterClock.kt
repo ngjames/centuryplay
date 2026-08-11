@@ -48,8 +48,9 @@ class PtpMasterClock(
         try {
             socket319 = DatagramSocket(PTP_EVENT_PORT).apply { reuseAddress = true }
             socket320 = DatagramSocket(PTP_GENERAL_PORT).apply { reuseAddress = true }
+            Ap2Log.log("PtpMasterClock: bound to privileged ports 319/320")
         } catch (e: Exception) {
-            Ap2Log.log("PtpMasterClock: Failed to bind to 319/320, using ephemeral ports")
+            Ap2Log.log("PtpMasterClock: failed to bind 319/320 (${e.message}), using ephemeral ports (PTP requires privileged ports on the receiver side)")
             socket319 = DatagramSocket().apply { reuseAddress = true }
             socket320 = DatagramSocket().apply { reuseAddress = true }
         }
@@ -91,7 +92,12 @@ class PtpMasterClock(
      */
     private suspend fun runPtpLoop() {
         val targetAddr = InetAddress.getByName(targetHost)
-        
+
+        // ANNOUNCE must precede SYNC/FOLLOW_UP: nqptp discards SYNC/FOLLOW_UP
+        // until the ANNOUNCE establishes our clock identity. Send an ANNOUNCE
+        // burst first, then keep the periodic ANNOUNCE every 8th message.
+        sendAnnounceBurst(count = 3, delayMs = 30)
+
         while (running) {
             val nowNs = System.nanoTime()
             
@@ -118,7 +124,7 @@ class PtpMasterClock(
     /**
      * Build PTP common header (34 bytes)
      */
-    private fun buildPtpHeader(msgType: Int, length: Int, seqId: Int, flags: Int = 0x0008): ByteArray {
+    private fun buildPtpHeader(msgType: Int, length: Int, seqId: Int, flags: Int, controlField: Int, logMessageInterval: Int): ByteArray {
         val header = ByteBuffer.allocate(34).order(ByteOrder.BIG_ENDIAN)
         
         header.put((0x10 or msgType).toByte()) // transportSpecific (0x1 for 802.1AS) | messageType
@@ -129,11 +135,11 @@ class PtpMasterClock(
         header.putShort(flags.toShort()) // flags
         header.putLong(0L) // correctionField
         header.putInt(0) // reserved
-        header.putLong(clockId) // clockIdentity
+        header.putLong(clockId) // clockIdentity (bytes 20-27)
         header.putShort(1) // sourcePortID
         header.putShort(seqId.toShort()) // sequenceId
-        header.put(0x05.toByte()) // controlField
-        header.put(0x00.toByte()) // logMessagePeriod
+        header.put(controlField.toByte()) // controlField
+        header.put(logMessageInterval.toByte()) // logMessageInterval
         
         return header.array()
     }
@@ -141,10 +147,9 @@ class PtpMasterClock(
     /**
      * Build PTP Announce message (64 bytes)
      */
-    private fun buildAnnounceMessage(seqId: Int): ByteArray {
-        val header = buildPtpHeader(MSG_ANNOUNCE, 64, seqId, 0x0008)
-        header[32] = 0x05.toByte() // controlField: Other
-        header[33] = 0x00.toByte() // logMessageInterval: 0 = 1 second
+    internal fun buildAnnounceMessage(seqId: Int): ByteArray {
+        // Announce: controlField=0x05 (Other), logMessageInterval=0x00 (1s)
+        val header = buildPtpHeader(MSG_ANNOUNCE, 64, seqId, 0x0008, 0x05, 0x00)
         
         val msg = ByteBuffer.allocate(64).order(ByteOrder.BIG_ENDIAN)
         msg.put(header)
@@ -174,11 +179,10 @@ class PtpMasterClock(
     /**
      * Build PTP Sync message (44 bytes)
      */
-    private fun buildSyncMessage(seqId: Int): ByteArray {
-        // Sync uses flags=0x0208 (twoStepFlag + ptpTimescale)
-        val header = buildPtpHeader(MSG_SYNC, 44, seqId, 0x0208)
-        header[32] = 0x00.toByte() // controlField: Sync
-        header[33] = 0xFD.toByte() // logMessageInterval: -3 = 125ms (signed byte)
+    internal fun buildSyncMessage(seqId: Int): ByteArray {
+        // Sync: twoStepFlag + ptpTimescale (0x0208), controlField=0x00 (Sync),
+        // logMessageInterval=0xFD (-3 = 125ms)
+        val header = buildPtpHeader(MSG_SYNC, 44, seqId, 0x0208, 0x00, 0xFD)
         
         val msg = ByteBuffer.allocate(44).order(ByteOrder.BIG_ENDIAN)
         msg.put(header)
@@ -189,12 +193,22 @@ class PtpMasterClock(
     
     /**
      * Build PTP Follow_Up message (76 bytes)
+     * 
+     * Bytes 44-75 carry the IEEE 802.1AS Apple organization extension TLV:
+     *  44-45  tlvType                    = 0x0003 (ORGANIZATION_EXTENSION)
+     *  46-47  lengthField                = 28 (bytes following this field)
+     *  48-50  organizationId             = 00:17:F2 (Apple)
+     *  51-53  organizationSubtype        = 00:00:01
+     *  54-63  lastGmPhaseChange          = 0 (10 bytes)
+     *  64-67  lastGmFreqChange           = 0 (4 bytes)
+     *  68-69  gmTimeBaseIndicator        = 0
+     *  70-71  scaledLastGmFreqChange     = 0
+     * Total TLV 32 bytes: 44 + 32 = 76.
      */
-    private fun buildFollowUpMessage(seqId: Int, originTimestampNs: Long): ByteArray {
-        // Follow_Up uses flags=0x0008 (ptpTimescale only)
-        val header = buildPtpHeader(MSG_FOLLOW_UP, 76, seqId, 0x0008)
-        header[32] = 0x02.toByte() // controlField: Follow_Up
-        header[33] = 0xFD.toByte() // logMessageInterval: -3 = 125ms
+    internal fun buildFollowUpMessage(seqId: Int, originTimestampNs: Long): ByteArray {
+        // Follow_Up: ptpTimescale only (0x0008), controlField=0x02 (Follow_Up),
+        // logMessageInterval=0xFD (-3 = 125ms)
+        val header = buildPtpHeader(MSG_FOLLOW_UP, 76, seqId, 0x0008, 0x02, 0xFD)
         
         val msg = ByteBuffer.allocate(76).order(ByteOrder.BIG_ENDIAN)
         msg.put(header)
@@ -208,21 +222,23 @@ class PtpMasterClock(
         msg.putInt((seconds and 0xFFFFFFFFL).toInt()) // secondsLo
         msg.putInt(nanoseconds) // nanoseconds
         
-        // TLV: Organization Extension (Apple)
+        // TLV: Organization Extension (Apple) - IEEE 802.1AS layout
         msg.position(44)
         msg.putShort(0x0003) // tlvType: ORGANIZATION_EXTENSION
-        msg.putShort(28) // lengthField
-        
-        // Apple organization ID (00:17:F2)
-        msg.put(byteArrayOf(0x00, 0x17, 0xF2.toByte()))
-        // Organization subtype (00:00:01)
-        msg.put(byteArrayOf(0x00, 0x00, 0x01))
+        msg.putShort(28) // lengthField: 28 bytes following this field
+        msg.put(byteArrayOf(0x00, 0x17, 0xF2.toByte())) // organizationId: Apple 00:17:F2
+        msg.put(byteArrayOf(0x00, 0x00, 0x01)) // organizationSubtype
         
         // lastGmPhaseChange (10 bytes) - zeros
-        msg.position(64)
-        msg.putLong(clockId) // lastGmClockIdentity
-        msg.putShort(0) // gmTimeBaseIndicator
-        msg.putShort(0) // scaledLastGmFreqChange
+        msg.position(54)
+        msg.putLong(0L)
+        msg.putShort(0)
+        // lastGmFreqChange (4 bytes) - zeros
+        msg.putInt(0)
+        // gmTimeBaseIndicator (2 bytes) - 0
+        msg.putShort(0)
+        // scaledLastGmFreqChange (2 bytes) - 0
+        msg.putShort(0)
         
         return msg.array()
     }
