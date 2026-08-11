@@ -61,6 +61,8 @@ class AirPlay2Client(
     fun disconnect() {
         ptpClock?.stop()
         rtpStreamer?.close()
+        rtspClient.stopFeedback()
+        rtspClient.teardown()
         rtspClient.disconnect()
         scope.cancel()
     }
@@ -117,6 +119,9 @@ class AirPlay2Client(
         }
         
         sentinelSent = false
+        
+        // Keepalive: POST /feedback every ~30s while streaming (tolerant of failures)
+        scope.launch { rtspClient.sendFeedback() }
         
         return true
     }
