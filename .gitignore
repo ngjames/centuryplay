@@ -33,6 +33,9 @@ platform-tools/
 gradle-8.5/
 bin/
 
+# Harness
+.omo/
+
 # Logs
 *.log
 logcat*.txt
