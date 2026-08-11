@@ -102,13 +102,16 @@ class AirPlay2Client(
         ptpClock?.sendAnnounceBurst(count = 5, delayMs = 50)
         delay(1500)
         
-        // Step 4: Send RECORD
-        record()
-        
-        // Step 4.5: Send FLUSH to set initial RTP timestamp state
+        // Step 4: Send FLUSH to set the initial RTP timestamp state.
+        // FLUSH must precede RECORD (pyatv/airplay2-rs send FLUSH before
+        // RECORD; RTP-Info seq=0;rtptime=0 anchors the streamer's start).
         flush()
         
-        // Step 4.6: Unmute
+        // Step 4.5: Send RECORD
+        record()
+        
+        // Step 4.6: Unmute (receiver volumes are 0..1; 0.0f is the dev's
+        // known-good unmute value at setup, UI slider maps 0..1 later)
         setVolume(0.0f)
         
         // Step 5: Initialize RTP streamer
@@ -183,9 +186,15 @@ class AirPlay2Client(
             put("streams", arrayOf(
                 NSDictionary().apply {
                     put("type", 96)
-                    put("audioFormat", 0x100000)
+                    // ALAC (uncompressed) per the AP2 audio SETUP spec:
+                    // audioFormat = 'alac' = 1633771873 (NOT the RAOP L16
+                    // bitmask 0x100000 - a 'format' key may carry the
+                    // bitmask, but 'audioFormat' must be the fourcc), ct=2
+                    // (ALAC; ct=1 is PCM), type=96, spf=352.
+                    // refs: airplay2-rs AIRPLAY_2_SPEC.md, pyatv raop2.
+                    put("audioFormat", 1633771873)
                     put("audioMode", "default")
-                    put("ct", 1)
+                    put("ct", 2)
                     put("spf", 352)
                     put("shk", NSData(sharedSecret))
                     put("isMedia", true)
@@ -223,8 +232,6 @@ class AirPlay2Client(
         
         return Triple(ctrlPort, dataPortValue, sharedSecret)
     }
-    
-    // ... (record unchanged) ...
 
     /**
      * Send FLUSH command with RTP-Info
