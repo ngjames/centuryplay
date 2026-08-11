@@ -24,6 +24,8 @@ class SettingsActivity : AppCompatActivity() {
         const val PREFS_NAME = "airplay_prefs"
         const val KEY_DEBUG_MODE = "debug_mode"
         const val KEY_MANUAL_HOST = "manual_host"
+        const val KEY_PROTOCOL_PREFERENCE = "protocol_preference"
+        const val KEY_AP2_TIMING = "ap2_timing"
     }
 
     private lateinit var prefs: SharedPreferences
@@ -56,6 +58,7 @@ class SettingsActivity : AppCompatActivity() {
         setupToolbar()
         setupMetadataPermission()
         setupGeneralSettings()
+        setupAirPlay2Settings()
         setupDebugMode()
         setupFooter()
     }
@@ -128,6 +131,64 @@ class SettingsActivity : AppCompatActivity() {
         autoConnectSwitch.isChecked = prefs.getBoolean("auto_connect", false)
         autoConnectSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("auto_connect", isChecked).apply()
+        }
+    }
+
+    private fun setupAirPlay2Settings() {
+        val protocolRow = findViewById<LinearLayout>(R.id.protocolPreferenceRow)
+        val protocolValue = findViewById<TextView>(R.id.protocolPreferenceValue)
+        val timingRow = findViewById<LinearLayout>(R.id.ap2TimingRow)
+        val timingValue = findViewById<TextView>(R.id.ap2TimingValue)
+
+        val protocolOptions = arrayOf(
+            getString(R.string.protocol_auto),
+            getString(R.string.protocol_v1),
+            getString(R.string.protocol_v2)
+        )
+        val timingOptions = arrayOf(
+            getString(R.string.timing_auto),
+            getString(R.string.timing_ptp)
+        )
+
+        fun updateProtocolLabel(value: Int) {
+            protocolValue.text = when (value) {
+                1 -> getString(R.string.protocol_v1)
+                2 -> getString(R.string.protocol_v2)
+                else -> getString(R.string.protocol_auto)
+            }
+        }
+
+        fun updateTimingLabel(value: Int) {
+            timingValue.text = if (value == 1) getString(R.string.timing_ptp) else getString(R.string.timing_auto)
+        }
+
+        val protocol = prefs.getInt(KEY_PROTOCOL_PREFERENCE, 0)
+        val timing = prefs.getInt(KEY_AP2_TIMING, 0)
+        updateProtocolLabel(protocol)
+        updateTimingLabel(timing)
+
+        protocolRow.setOnClickListener {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.protocol_preference)
+                .setSingleChoiceItems(protocolOptions, protocol) { dialog, which ->
+                    prefs.edit { putInt(KEY_PROTOCOL_PREFERENCE, which) }
+                    updateProtocolLabel(which)
+                    dialog.dismiss()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+
+        timingRow.setOnClickListener {
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.ap2_timing)
+                .setSingleChoiceItems(timingOptions, timing) { dialog, which ->
+                    prefs.edit { putInt(KEY_AP2_TIMING, which) }
+                    updateTimingLabel(which)
+                    dialog.dismiss()
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
         }
     }
 

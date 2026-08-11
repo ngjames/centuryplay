@@ -23,6 +23,10 @@
     <string name="settings_title">settings</string>
     <string name="protocol_preference">protocol preference</string>
     <string name="protocol_preference_summary">choose which airplay version to use</string>
+    <string name="ap2_timing">airplay 2 timing</string>
+    <string name="ap2_timing_summary">timing sync mode for airplay 2</string>
+    <string name="timing_auto">auto (ntp)</string>
+    <string name="timing_ptp">ptp</string>
     
     <!-- Debug mode -->
     <string name="debug_mode">debug mode</string>
