@@ -11,8 +11,8 @@ android {
         applicationId = "com.airplay.streamer"
         minSdk = 29  // Android 10+ required for AudioPlaybackCapture
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0"
+        versionCode = 4
+        versionName = "1.1.0"
     }
 
     buildTypes {
