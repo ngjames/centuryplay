@@ -1,6 +1,7 @@
 package com.airplay.streamer.airplay2.timing
 
 import kotlinx.coroutines.*
+import com.airplay.streamer.airplay2.util.Ap2Log
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -48,7 +49,7 @@ class PtpMasterClock(
             socket319 = DatagramSocket(PTP_EVENT_PORT).apply { reuseAddress = true }
             socket320 = DatagramSocket(PTP_GENERAL_PORT).apply { reuseAddress = true }
         } catch (e: Exception) {
-            com.airplay.streamer.util.LogServer.log("PtpMasterClock: Failed to bind to 319/320, using ephemeral ports")
+            Ap2Log.log("PtpMasterClock: Failed to bind to 319/320, using ephemeral ports")
             socket319 = DatagramSocket().apply { reuseAddress = true }
             socket320 = DatagramSocket().apply { reuseAddress = true }
         }

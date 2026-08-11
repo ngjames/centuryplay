@@ -9,7 +9,7 @@ import org.bouncycastle.crypto.params.KeyParameter
 import org.bouncycastle.crypto.params.ParametersWithIV
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import com.airplay.streamer.util.LogServer
+import com.airplay.streamer.airplay2.util.Ap2Log
 
 /**
  * ChaCha20-Poly1305 AEAD Cipher for AirPlay 2
@@ -22,7 +22,7 @@ class Chacha20Cipher(
     private val nonceLength: Int = 8
 ) {
     init {
-        LogServer.log("Chacha20Cipher: Init outKey=${encryptKey.toHex().take(16)}... inKey=${decryptKey.toHex().take(16)}...")
+        Ap2Log.log("Chacha20Cipher: Init outKey=${encryptKey.toHex().take(16)}... inKey=${decryptKey.toHex().take(16)}...")
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
@@ -75,7 +75,7 @@ class Chacha20Cipher(
      */
     fun encrypt(plaintext: ByteArray, nonce: ByteArray, aad: ByteArray? = null): ByteArray {
         val paddedNonce = if (nonce.size != 12) padNonce(nonce) else nonce
-        LogServer.log("Chacha20Cipher: Encrypt ${plaintext.size} bytes. Nonce=${paddedNonce.toHex()} AAD=${aad?.toHex() ?: "null"}")
+        Ap2Log.log("Chacha20Cipher: Encrypt ${plaintext.size} bytes. Nonce=${paddedNonce.toHex()} AAD=${aad?.toHex() ?: "null"}")
         return chacha20Poly1305Encrypt(encryptKey, paddedNonce, plaintext, aad ?: ByteArray(0))
     }
     

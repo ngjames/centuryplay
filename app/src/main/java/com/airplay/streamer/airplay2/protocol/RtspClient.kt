@@ -1,7 +1,7 @@
 package com.airplay.streamer.airplay2.protocol
 
 import com.airplay.streamer.airplay2.crypto.*
-import com.airplay.streamer.util.LogServer
+import com.airplay.streamer.airplay2.util.Ap2Log
 import java.io.InputStream
 import java.io.OutputStream
 import java.math.BigInteger
@@ -103,11 +103,11 @@ class RtspClient(
         
         // Encrypt if HAP session is enabled
         if (hapSession.isEnabled) {
-            LogServer.log("RtspClient: Encrypting request (${request.size} bytes)")
+            Ap2Log.log("RtspClient: Encrypting request (${request.size} bytes)")
             request = hapSession.encrypt(request)
-            LogServer.log("RtspClient: Sending encrypted request (${request.size} bytes)")
+            Ap2Log.log("RtspClient: Sending encrypted request (${request.size} bytes)")
         } else {
-            LogServer.log("RtspClient: Sending plaintext request (${request.size} bytes)")
+            Ap2Log.log("RtspClient: Sending plaintext request (${request.size} bytes)")
         }
         
         output!!.write(request)
@@ -123,23 +123,23 @@ class RtspClient(
         val buffer = ByteArray(4096)
         var responseBuffer = ByteArray(0) // Accumulates PLAINTEXT (decrypted or raw)
         
-        LogServer.log("RtspClient: Waiting for response...")
+        Ap2Log.log("RtspClient: Waiting for response...")
         
         while (true) {
             val bytesRead = input!!.read(buffer)
             if (bytesRead < 0) {
-                LogServer.log("RtspClient: Connection closed by server (EOF)")
+                Ap2Log.log("RtspClient: Connection closed by server (EOF)")
                 throw Exception("Connection closed")
             }
             
-            LogServer.log("RtspClient: Read $bytesRead bytes from socket")
+            Ap2Log.log("RtspClient: Read $bytesRead bytes from socket")
             
             val chunk = buffer.copyOf(bytesRead)
             
             // Decrypt if HAP session is enabled
             val data = if (hapSession.isEnabled) {
                 val decrypted = hapSession.decrypt(chunk)
-                LogServer.log("RtspClient: Decrypted ${chunk.size} bytes -> ${decrypted.size} bytes")
+                Ap2Log.log("RtspClient: Decrypted ${chunk.size} bytes -> ${decrypted.size} bytes")
                 decrypted
             } else {
                 chunk
@@ -161,7 +161,7 @@ class RtspClient(
                 
                 val bodyStart = headerEnd + 4
                 if (responseBuffer.size >= bodyStart + contentLength) {
-                    LogServer.log("RtspClient: Full response received ($contentLength body bytes)")
+                    Ap2Log.log("RtspClient: Full response received ($contentLength body bytes)")
                     return parseResponse(responseBuffer)
                 }
             }

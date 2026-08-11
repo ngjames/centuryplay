@@ -67,4 +67,7 @@ dependencies {
 
     // dd-plist for binary plist encode/decode (AirPlay 2 SETUP/RECORD)
     implementation("com.googlecode.plist:dd-plist:1.28")
+
+    // JVM unit tests (JUnit 4) for the airplay2 package
+    testImplementation("junit:junit:4.13.2")
 }
