@@ -276,9 +276,10 @@ class AirPlay2Client(
     }
 
     /**
-     * Send SET_PARAMETER to set volume
+     * Send SET_PARAMETER to set volume (0..1). Public so the capture service
+     * can route UI volume changes to the AP2 path.
      */
-    private fun setVolume(vol: Float) {
+    fun setVolume(vol: Float) {
         val content = "volume: $vol\r\n".toByteArray()
         rtspClient.sendRtsp(
             "SET_PARAMETER", 
@@ -345,6 +346,16 @@ class AirPlay2Client(
             streamer.sendAudioPacket(frame, clockId, sendAnchor = true)
         }
     }
+
+    /**
+     * Liveness probe for the mid-stream health monitor.
+     *
+     * Posts a /feedback keepalive over the RTSP control connection (the same
+     * benign POST the keepalive loop already sends every ~30s). Returns false
+     * when the receiver has dropped the connection (EOF/exception) or the
+     * client has been torn down.
+     */
+    fun connectionAlive(): Boolean = rtspClient.sendFeedbackOnce()
     
     /**
      * Get local IP address
