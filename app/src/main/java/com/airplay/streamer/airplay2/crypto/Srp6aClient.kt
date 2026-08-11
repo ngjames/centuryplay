@@ -69,9 +69,50 @@ class Srp6aClient(
         }
         
         /** k = H(PAD(N) | PAD(g)) - RFC 5054 */
-        private fun calculateK(): BigInteger {
+        internal fun calculateK(): BigInteger {
             val hash = sha512(N.padToN(), g.padToN())
             return BigInteger(1, hash)
+        }
+        
+        /** A = g^a mod N */
+        internal fun computeA(privateKey: BigInteger): BigInteger = g.modPow(privateKey, N)
+        
+        /** u = H(PAD(A) | PAD(B)) - uses PADDED hashing */
+        internal fun computeU(A: BigInteger, B: BigInteger): BigInteger {
+            return BigInteger(1, sha512(A.padToN(), B.padToN()))
+        }
+        
+        /** x = H(salt | H(I | ":" | P)) - salt uses natural byte length */
+        internal fun computeX(salt: ByteArray, identity: ByteArray, password: ByteArray): BigInteger {
+            val innerHash = sha512(identity + ":".toByteArray() + password)
+            return BigInteger(1, sha512(salt, innerHash))
+        }
+        
+        /** S = (B - k * g^x) ^ (a + u * x) mod N */
+        internal fun computeSharedSecret(a: BigInteger, A: BigInteger, B: BigInteger, x: BigInteger): BigInteger {
+            val u = computeU(A, B)
+            val gx = g.modPow(x, N)
+            val kgx = (calculateK() * gx) % N
+            val base = (B - kgx).mod(N)
+            val exp = a + (u * x)
+            return base.modPow(exp, N)
+        }
+        
+        /** K = H(S) - session key (natural bytes) */
+        internal fun computeK(S: BigInteger): ByteArray = sha512(S.toNaturalBytes())
+        
+        /** M1 = H(H(N) XOR H(g) | H(I) | s | A | B | K) - all natural bytes */
+        internal fun computeM1(identity: ByteArray, salt: ByteArray, A: BigInteger, B: BigInteger, K: ByteArray): ByteArray {
+            val hN = sha512(N.toNaturalBytes())
+            val hG = sha512(g.toNaturalBytes())
+            val hXor = ByteArray(64) { i -> (hN[i].toInt() xor hG[i].toInt()).toByte() }
+            val hI = sha512(identity)
+            return sha512(hXor, hI, salt, A.toNaturalBytes(), B.toNaturalBytes(), K)
+        }
+        
+        /** M2 = H(A | M1 | K) - server proof, A uses natural bytes */
+        internal fun computeM2(A: BigInteger, M1: ByteArray, K: ByteArray): ByteArray {
+            return sha512(A.toNaturalBytes(), M1, K)
         }
         
         /**
@@ -86,7 +127,6 @@ class Srp6aClient(
     }
     
     private val random = SecureRandom()
-    private val k = calculateK()
     
     private var a: BigInteger? = null // Client private key
     var A: BigInteger? = null // Client public key
@@ -106,7 +146,14 @@ class Srp6aClient(
      */
     fun generateClientCredentials(): BigInteger {
         a = BigInteger(256, random)
-        A = g.modPow(a, N)
+        A = computeA(a!!)
+        return A!!
+    }
+    
+    /** Test hook: generate credentials from a fixed private key (on-wire flow unchanged) */
+    internal fun generateClientCredentials(privateKey: BigInteger): BigInteger {
+        a = privateKey
+        A = computeA(privateKey)
         return A!!
     }
     
@@ -126,30 +173,17 @@ class Srp6aClient(
             generateClientCredentials()
         }
         
-        // u = H(PAD(A) | PAD(B)) - uses PADDED hashing
-        val u = BigInteger(1, sha512(A!!.padToN(), B!!.padToN()))
-        
         // x = H(salt | H(I | ":" | P))
-        val innerHash = sha512(identity + ":".toByteArray() + password)
-        val x = BigInteger(1, sha512(serverSalt, innerHash))
+        val x = computeX(serverSalt, identity, password)
         
         // S = (B - k * g^x) ^ (a + u * x) mod N
-        val gx = g.modPow(x, N)
-        val kgx = (k * gx) % N
-        val base = (B!! - kgx).mod(N)
-        val exp = a!! + (u * x)
-        S = base.modPow(exp, N)
+        S = computeSharedSecret(a!!, A!!, B!!, x)
         
         // K = H(S) - session key (natural bytes)
-        this.K = sha512(S!!.toNaturalBytes())
+        this.K = computeK(S!!)
         
         // M1 = H(H(N) XOR H(g) | H(I) | s | A | B | K) - all natural bytes
-        val hN = sha512(N.toNaturalBytes())
-        val hG = sha512(g.toNaturalBytes())
-        val hXor = ByteArray(64) { i -> (hN[i].toInt() xor hG[i].toInt()).toByte() }
-        val hI = sha512(identity)
-        
-        M1 = sha512(hXor, hI, serverSalt, A!!.toNaturalBytes(), B!!.toNaturalBytes(), K!!)
+        M1 = computeM1(identity, serverSalt, A!!, B!!, K!!)
         
         return Pair(A!!.toNaturalBytes(), M1!!)
     }
@@ -159,7 +193,7 @@ class Srp6aClient(
      * M2 = H(A | M1 | K)
      */
     fun verifyServerProof(M2: ByteArray): Boolean {
-        val expectedM2 = sha512(A!!.toNaturalBytes(), M1!!, K!!)
+        val expectedM2 = computeM2(A!!, M1!!, K!!)
         return M2.contentEquals(expectedM2)
     }
 }

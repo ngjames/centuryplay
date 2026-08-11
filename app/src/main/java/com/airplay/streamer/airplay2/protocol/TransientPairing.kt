@@ -97,7 +97,6 @@ class TransientPairing(
         
         // Process server challenge
         val (clientPk, clientProof) = srpClient!!.processChallenge(salt, serverPk)
-        println("TransientPairing: M3 srpClient hash=${srpClient.hashCode()}, K=${if (srpClient!!.K != null) "SET" else "NULL"}")
         
         val m3Data = Tlv8.encode(
             Tlv8.Type.SEQ_NO to Tlv8.byteValue(0x03),
