@@ -1,151 +1,188 @@
-# airplay 2 protocol & implementation guide
+# airplay 2 protocol documentation (sender reference)
 
-> **status**: research & implementation draft
-> **last updated**: may 2026
+> **status**: verified implementation notes from centuryplay's airplay 2 sender path
+> **last updated**: august 2026
 
-this document covers the airplay 2 protocol, focusing on the technical requirements for an android implementation, including the shizuku workaround for ptp synchronization.
+this document describes the airplay 2 (ap2) protocol as implemented by the sender (source) side of centuryplay, for audio-only streaming. it complements [docs/AIRPLAY_PROTOCOL.md](AIRPLAY_PROTOCOL.md), which covers airplay 1 / raop. every fact here is grounded in the implementation in `app/src/main/java/com/airplay/streamer/airplay2/` and its jvm unit/integration tests; confirmation against real receiver hardware (homepod, apple tv 4k, shairport-sync + nqptp) is still pending and is tracked in [docs/TESTING_AP2.md](TESTING_AP2.md).
 
 ## table of contents
 
 1. [overview](#overview)
-2. [protocol differences (ap1 vs ap2)](#protocol-differences)
-3. [pairing & security (hap)](#pairing--security)
-4. [session establishment (rtsp)](#session-establishment)
-5. [audio formats & codecs](#audio-formats--codecs)
-6. [time synchronization (ptp)](#time-synchronization)
-7. [shizuku-based implementation plan](#shizuku-implementation)
-8. [technical hurdles](#technical-hurdles)
+2. [pairing](#pairing)
+3. [control channel](#control-channel)
+4. [audio streaming](#audio-streaming)
+5. [timing](#timing)
+6. [setup plist reference](#setup-plist-reference)
+7. [sources](#sources)
 
 ---
 
 ## overview
 
-airplay 2 (ap2) is a major evolution of apple's wireless streaming protocol. it introduces multi-room audio, enhanced buffering, and modern security (hap). unlike airplay 1 (raop), which is relatively simple and unencrypted by default, airplay 2 is encrypted from the start and requires tight clock synchronization between all devices in a group.
+centuryplay acts as an airplay 2 **sender** (source), the same role itunes/music plays on apple platforms. audio-only: no video mirroring, no dacp, no fairplay sapv2 (not required for audio-only streaming).
 
-Important capture note: a receiver advertising `_airplay._tcp` does not mean macOS Music will necessarily use the AirPlay 2 audio path. Samsung AirScreen advertises `_airplay._tcp` on a dynamic port, but the macOS Music capture used RAOP TCP 5000 with FairPlay SAPv2 (`POST /fp-setup`) and then AppleLossless in the classic RAOP session.
+| property | value |
+|----------|-------|
+| control protocol | rtsp over plain tcp, port 7000, no tls |
+| security | chacha20-poly1305 (hap framing + audio), srp-6a transient pairing, hkdf-sha512 keys |
+| audio transport | rtp over udp |
+| audio format | uncompressed alac, 44100 hz, 16-bit, stereo |
+| timing | ntp (default) or ptp-master (shairport-sync + nqptp) |
+| discovery | mdns/bonjour (`_airplay._tcp`, `protocolVersion=2`) |
 
----
+### protocol flow summary
 
-## protocol differences
-
-| feature | airplay 1 (raop) | airplay 2 |
-|---------|------------------|-----------|
-| **control** | standard rtsp/sdp | rtsp with binary plist (bplist) |
-| **security** | aes-128-cbc + rsa | chacha20-poly1305 + curve25519 |
-| **pairing** | none (or apple challenge) | hap (homekit accessory protocol) |
-| **timing** | ntp-style (port 6002) | ptp (ieee 1588, ports 319/320) |
-| **buffering** | static (~2s) | dynamic / buffered audio |
-| **discovery** | `_raop._tcp` | `_airplay._tcp` + `_raop._tcp` |
-
----
-
-## pairing & security (hap)
-
-airplay 2 requires mandatory pairing using the homekit accessory protocol (hap). this establishes a trusted relationship between the sender and receiver.
-
-### 1. pair-setup (one-time)
-uses **srp-6a** (secure remote password) to exchange a shared secret without ever sending the password over the wire.
-- **client:** sends `pair-setup` start request.
-- **server:** responds with salt and public key.
-- **exchange:** both parties compute a session key.
-
-### 2. pair-verify (every session)
-uses **curve25519** and **ed25519** for fast, secure authentication of an existing pairing.
-- establishes a transient session key for the rtsp control channel.
-- control channel is encrypted using **chacha20-poly1305**.
-
----
-
-## session establishment (rtsp)
-
-airplay 2 replaces standard sdp (session description protocol) with **binary plists (bplist)** inside the rtsp body.
-
-### 1. discovery & info
-the client first calls `GET /info` to retrieve the server's capabilities.
 ```
-X-Apple-ProtocolVersion: 1
-Content-Type: application/x-apple-binary-plist
-```
-the response contains a bplist with `features`, `deviceid`, `model`, etc.
-
-### 2. setup
-the `SETUP` request defines the stream parameters.
-```
-{
-  "streams": [
-    {
-      "type": 96,
-      "ct": 1,           // 1=PCM, 2=ALAC, 4=AAC
-      "spf": 352,        // Samples per frame
-      "latencyMin": 0,
-      "latencyMax": 0,
-      "shk": <shared_key> // Shared encryption key
-    }
-  ]
-}
+sender (this app)                          receiver
+   |                                            |
+   |  ---- post /pair-pin-start --------------> |
+   |  <---- 200 + pin / status --------------- |
+   |                                            |
+   |  ---- pair-setup m1 (srp-6a a, tlv8) ----> |
+   |  <---- pair-setup m2 (salt, b) ----------- |
+   |  ---- pair-setup m3 (proof) -------------> |
+   |  <---- pair-setup m4 --------------------- |   session keys derived (hkdf-sha512)
+   |                                            |
+   |  ---- setup (event plist, timing) -------> |
+   |  <---- 200 (eventport) ------------------- |
+   |  ---- setup (audio plist, shk) ----------> |
+   |  <---- 200 (control/data ports, timing) -- |
+   |  ---- flush -----------------------------> |
+   |  ---- record ----------------------------> |
+   |                                            |
+   |  ==== udp: encrypted rtp audio ===========> |
+   |  ---- post /feedback keepalive (~30s) ----> |
+   |                                            |
+   |  ---- teardown ---------------------------> |
 ```
 
 ---
 
-## audio formats & codecs
+## pairing
 
-airplay 2 supports higher quality and more efficient codecs than airplay 1.
+pairing is **transient**: a one-session srp-6a exchange, no stored credentials (no m5/m6 flows). this is enough for audio streaming and matches what pyatv, airplay2-rs and owntone senders do.
 
-| codec | resolution | usage |
-|-------|------------|-------|
-| **alac** | 16/44.1 or 24/48 | standard lossless |
-| **aac** | 256kbps | lossy / bandwidth efficient |
-| **pcm (l16)** | 16/44.1 | raw audio before encapsulation |
+1. `POST /pair-pin-start` obtains the setup pin (or the user supplies one).
+2. `POST /pair-setup` runs srp-6a over tlv8 bodies:
+   - m1: `METHOD` 0x00 (pair-setup), `SEQ_NO` 1, `PUBLIC_KEY` (client a), `FLAGS` 0x10 (transient pairing)
+   - m2: server salt + public key b
+   - m3: `SEQ_NO` 3, client public key a, client proof
+   - m4: server proof, verified by the client
+3. the resulting shared secret `k` feeds hkdf-sha512 to derive the control-channel keys.
 
-**note:** apple music on android often defaults to aac (256kbps) for third-party speakers, even if the source is lossless.
+srp-6a uses sha-512 and the rfc 5054 3072-bit group (g=5), not the bouncycastle default srp6client sha-1/1024-bit parameters.
 
----
-
-## time synchronization (ptp)
-
-the biggest hurdle for android implementations is **ptp (precision time protocol)**.
-
-- **purpose:** ensures all speakers in a group play the exact same sample at the exact same microsecond.
-- **ports:** requires binding to **udp ports 319 and 320**.
-- **problem:** these are privileged ports (< 1024) on android/linux. standard apps cannot access them without root.
+fairplay sapv2 is **not required** for audio-only streaming. caveat: one newer-homepod-firmware case (build 23l471) reportedly demands fairplay; this is contested by the sender implementations referenced below and is not implemented.
 
 ---
 
-## shizuku-based implementation plan
+## control channel
 
-to enable airplay 2 multi-room sync without root, we use **shizuku** to run a privileged native bridge.
+control runs over plain tcp 7000. there is **no tls**. pre-pairing requests (pair-pin-start, pair-setup) are plaintext http; once pairing completes, every subsequent request/response body is encrypted with the hap chacha20-poly1305 framing.
 
-### 1. the ptp bridge (`ptp-bridge`)
-a small native binary compiled via ndk that:
-- binds to udp 319/320 as the `shell` user (uid 2000).
-- implements a minimal ptp client/slave logic.
-- shares the calculated clock offset with the main app.
+### hap frame format
 
-### 2. data exchange
-- **shared memory:** use `android.os.SharedMemory` to pass timing data from the shizuku service to the app process with zero latency.
-- **local socket:** use a unix domain socket in `/data/local/tmp/` for command/control of the bridge.
+```
++--------------------+-------------------------+------------------+
+| length (2, LE)     | chacha20-poly1305       | tag (16)         |
++--------------------+-------------------------+------------------+
+```
 
-### 3. shizuku workflow
-1. **app** checks for shizuku availability.
-2. **app** requests shizuku permission.
-3. **app** uses `Shizuku.newProcess` to launch `ptp-bridge`.
-4. **bridge** binds to ports and starts syncing.
-5. **app** reads timing data from shared memory to adjust its rtp timestamps.
+- `length`: 2-byte little-endian ciphertext length (aad = this length prefix).
+- each frame is at most 1024 bytes.
+- nonce: 4 zero bytes + 8-byte little-endian counter, incremented per frame.
+- keys: hkdf-sha512 with salt `control-salt`, info `control-write-encryption-key` for what the sender writes and `control-read-encryption-key` for what it reads.
 
----
+### requests
 
-## technical hurdles
-
-1. **shizuku dependency:** requires the user to have shizuku installed and configured (via adb).
-2. **jitter:** without hardware timestamping (which android doesn't expose to apps), ptp accuracy is limited to software-level precision (~1-5ms), which is enough for stable playback but might struggle with "perfect" multi-room phase alignment.
-3. **battery:** running a high-frequency ptp clock and real-time audio capture is power-intensive.
-4. **hybrid receivers:** devices may advertise AirPlay 2 discovery while still accepting Music audio over RAOP plus FairPlay SAPv2. For centuryplay, treat `_raop._tcp` TXT `et=5` without `et=1` as a FairPlay sender problem, not as proof that the AirPlay 2/HAP path was selected.
+- `setup` (event channel): binary plist body with `timingProtocol` etc. (see [setup plist reference](#setup-plist-reference)).
+- `setup` (audio): binary plist body with the stream params and the shared `shk`.
+- `flush` then `record` start the stream.
+- `set_parameter` volume: body `volume: <float 0..1>`.
+- `POST /feedback` keepalive every ~30s while streaming (body `volume: 0.0` or the current volume); a receiver may drop the session if it goes quiet.
+- `teardown` closes the session.
 
 ---
 
-## references
+## audio streaming
 
-- [official hap specification](https://developer.apple.com/homekit/specification/)
-- [nqptp source code](https://github.com/mikebrady/nqptp)
-- [ap2-sender (python)](https://github.com/openairplay/ap2-sender)
-- [shizuku documentation](https://shizuku.rikka.app/)
+alac is the realtime airplay 2 stream codec. centuryplay sends **uncompressed alac** frames (bit-packed 23-bit header + raw pcm samples), 352 samples per frame, 44100 hz, stereo.
+
+- rtp header: 12 bytes, v=2, payload type 96.
+- per-packet encryption: chacha20-poly1305.
+  - aad = rtp timestamp (4 bytes) + ssrc (4 bytes)
+  - nonce = 4 zero bytes + 8-byte **little-endian packet counter** (increments per packet, independent of the rtp sequence number)
+- key = `shk`, the **sender-generated** 32 random bytes placed in the audio `setup` plist; the receiver decrypts with whatever `shk` the sender supplied, so any consistent 32-byte key works.
+- pacing: buffer roughly 125 frames (~1s cold) before the first packet, then send at the capture rate.
+- anchor (sync) packets tell the receiver when to play; anchors are stamped in the receiver's clock frame (see timing).
+
+---
+
+## timing
+
+two modes, selectable in settings (`auto` = ntp default, `ptp` for shairport-sync).
+
+### ntp (default)
+
+- event `setup` carries `timingProtocol` = `ntp`.
+- after audio `setup` the receiver returns a timing port; the sender answers pt 82/83 (0x52 request, 0x53 reply) timing requests.
+- clock offset from the exchange: `offset = ((t2 - t1) + (t3 - t4)) / 2`.
+- anchors are stamped in the receiver clock frame by adding that offset to the local monotonic time.
+- single-room playback works, including homepod / apple tv 4k (airplay2-rs reports ntp-mode works on homepod).
+
+### ptp-master (shairport-sync + nqptp)
+
+- event `setup` carries `timingProtocol` = `ptp`; the sender runs a ptp grandmaster.
+- `announce` first, before any sync/follow_up, so nqptp accepts the clock id (nqptp discards sync/follow_up until announce establishes it).
+- gptp profile: transport-specific field 0x1; sync/follow_up log message interval 125 ms (0xfd); announce interval 1 s (0x00).
+- follow_up carries the 802.1as apple org tlv (org id 00:17:f2, last gm phase/freq change fields), length field 28.
+- binds udp 319/320; on unrooted android this falls back to ephemeral source ports. whether nqptp accepts an ephemeral-source grandmaster is the open question; if it does not, ptp on android would require privileged ports (root/shizuku), which is out of scope. ntp is the recommended default.
+
+### ptp-slave (deferred)
+
+ptp-slave mode (receiver as grandmaster, mtrudel's one-way-offset from sync/follow_up) is documented but **not implemented**. ntp mode deliberately does not use the one-way-offset approach.
+
+---
+
+## setup plist reference
+
+### event channel setup
+
+| key | value |
+|-----|-------|
+| `sessionUUID` | uuid string |
+| `deviceID` / `macAddress` | sender mac |
+| `timingProtocol` | `"NTP"` or `"PTP"` |
+| `timingPeerInfo` | addresses + id |
+| `name` | `"centuryplay"` |
+
+response: `eventPort`.
+
+### audio setup
+
+| key | value |
+|-----|-------|
+| `streams[0].type` | 96 |
+| `streams[0].ct` | 2 (alac; ct=1 is pcm) |
+| `streams[0].spf` | 352 |
+| `streams[0].audioFormat` | 1633771873 (`'alac'` fourcc; not the raop l16 bitmask) |
+| `streams[0].shk` | sender-generated 32 bytes |
+| `streams[0].latencyMin` / `latencyMax` | 11025 / 88200 |
+
+response: `controlPort`, `dataPort`, timing info.
+
+---
+
+## sources
+
+- [airplay2-rs `AIRPLAY_2_SPEC.md`](https://github.com/zecuse/airplay2-rs)
+- [pyatv](https://github.com/postlund/pyatv)
+- [shairport-sync](https://github.com/mikebrady/shairport-sync) (`rtp.c` chacha20-poly1305 decrypt layout: aad ts+ssrc, nonce 4z + 8-byte le counter)
+- [mtrudel/airplay](https://github.com/mtrudel/airplay) (hex.pm `airplay` package)
+- [openairplay/airplay2-receiver](https://github.com/openairplay/airplay2-receiver)
+
+---
+
+## changelog
+
+- **august 2026**: replaced the may 2026 research draft with verified sender-implementation notes (no tls on 7000, chacha20-poly1305 control + audio, hkdf-sha512 control keys, sender-generated shk, uncompressed alac, ntp default / ptp-master, fairplay not required for audio-only).

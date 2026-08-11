@@ -26,7 +26,8 @@ centuryplay completes the chain by letting android devices stream system audio t
 
 - system audio capture: stream any audio playing on your device.
 - auto discovery: automatically find airplay devices via mdns/bonjour.
-- encrypted streaming: aes-128-cbc encryption with rsa key exchange.
+- airplay 2 streaming: encrypted alac audio with ntp or ptp timing.
+- encrypted streaming: aes-128-cbc encryption with rsa key exchange (airplay 1).
 - synchronized playback: proper rtp timing and sync packets.
 - volume control: adjust volume on the receiver.
 - music player integration: now playing metadata and controls.
@@ -59,7 +60,7 @@ bottom line: excellent quality, but not bit-perfect hi-res. cd quality (16-bit/4
 | protocol | status | notes |
 |----------|--------|-------|
 | airplay 1 (raop) | working | l16 pcm audio, encrypted |
-| airplay 2 | in progress | coming soon |
+| airplay 2 | working | alac audio, encrypted; ntp timing default, ptp for shairport-sync |
 
 ## requirements
 
@@ -120,6 +121,8 @@ uses android's `audioplaybackcapture` api to capture system audio, then streams 
 
 see [docs/airplay_protocol.md](docs/AIRPLAY_PROTOCOL.md) for detailed protocol documentation.
 
+airplay 2 protocol notes and testing runbook: [docs/airplay2_protocol.md](docs/AIRPLAY2_PROTOCOL.md), [docs/testing_ap2.md](docs/TESTING_AP2.md).
+
 ## tested receivers
 
 | receiver | protocol | status | notes |
@@ -128,17 +131,26 @@ see [docs/airplay_protocol.md](docs/AIRPLAY_PROTOCOL.md) for detailed protocol d
 | shairport-sync v3.x | airplay 1 | working | |
 | airport express | airplay 1 | working | |
 | apple tv (gen 2-3) | airplay 1 | working | |
-| apple tv 4k | airplay 2 | requires airplay 2 | in development |
-| homepod / mini | airplay 2 | requires airplay 2 | in development |
+| shairport-sync (ap2) | airplay 2 | implemented | ptp master mode; hardware validation pending (blocked-on-hardware) |
+| apple tv 4k | airplay 2 | implemented | ntp mode; hardware validation pending (blocked-on-hardware) |
+| homepod / mini | airplay 2 | implemented | ntp mode; hardware validation pending (blocked-on-hardware) |
+| airplay2-receiver (python) | airplay 2 | test target | jvm mock + integration runbook in [docs/testing_ap2.md](docs/TESTING_AP2.md) |
 | airscreen / samsung | raop + fairplay | unsupported | requires fairplay sapv2 (`et=5`) sender crypto |
 
 ## limitations
 
 - drm content: some apps block capture (netflix etc).
 - latency: inherent ~2s buffer latency.
+- multi-room: not supported. airplay 2 multi-room speaker groups (ptp-driven) are out of scope.
 - fairplay-only receivers: devices advertising `et=5` without `et=1` require Apple's FairPlay SAPv2 audio encryption. centuryplay now detects this and shows an unsupported-device message instead of hanging on connect.
+- airplay 2 on-device streaming is validated by unit/integration tests only (no receiver hardware available to the implementing session - see [docs/testing_ap2.md](docs/TESTING_AP2.md) for the runbook).
+- newer-homepod firmware (build 23l471) fairplay requirement: reported in the field but contested by the reference sender implementations; not implemented.
+- ptp mode on unrooted android uses ephemeral source ports (319/320 are privileged). whether shairport-sync's nqptp accepts an ephemeral-source grandmaster is the open question - ntp is the recommended default.
 
 ## changelog
+
+### v1.1.0 (august 2026)
+- airplay 2 support: transient pairing, encrypted control + audio, alac streaming, ntp + ptp timing, settings, tests.
 
 ### v1.0 (january 2026)
 - music player integration: real-time metadata (title, artist, art) and controls.
