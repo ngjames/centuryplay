@@ -64,4 +64,7 @@ dependencies {
     
     // Bouncy Castle for SRP-6a crypto (AirPlay 2 Pairing)
     implementation("org.bouncycastle:bcprov-jdk15on:1.70")
+
+    // dd-plist for binary plist encode/decode (AirPlay 2 SETUP/RECORD)
+    implementation("com.googlecode.plist:dd-plist:1.28")
 }
