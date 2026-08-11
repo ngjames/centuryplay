@@ -50,15 +50,20 @@ class RtspClient(
     // Feedback keepalive state
     private val feedbackActive = AtomicBoolean(false)
     
-    // Session state
+    // Session state. sessionUuid is set by AirPlay2Client after the event
+    // SETUP generates it, so TEARDOWN targets the real session URI.
     var sessionUuid: String? = null
-        private set
-    var audioSharedSecret: ByteArray? = null
-        private set
-    var audioControlPort: Int = 0
-        private set
-    var audioDataPort: Int = 0
-        private set
+        internal set
+
+    /**
+     * Serializes the full request/response cycle (cseq++ + write + read).
+     *
+     * Callers that can overlap - the /feedback keepalive loop, the health
+     * monitor's connectionAlive(), and setVolume - would otherwise interleave
+     * requests on the socket and steal each other's responses (the reader
+     * cannot tell which response belongs to which writer).
+     */
+    private val requestLock = Any()
     
     /**
      * Connect to the AirPlay receiver
@@ -88,7 +93,13 @@ class RtspClient(
     fun getLocalAddress(): String? = socket?.localAddress?.hostAddress
     
     /**
-     * Send RTSP request and get response
+     * Send RTSP request and get response.
+     *
+     * The cseq++ / write / readResponse critical section runs under
+     * [requestLock] so concurrent callers cannot interleave requests or
+     * consume each other's responses. Blocking socket I/O is serialized by
+     * design; callers run on Dispatchers.IO (or a UI-triggered volume change,
+     * which already performed blocking I/O here).
      */
     fun sendRtsp(
         method: String,
@@ -97,46 +108,48 @@ class RtspClient(
         contentType: String = "application/octet-stream",
         extraHeaders: Map<String, String> = emptyMap()
     ): RtspResponse {
-        cseq++
-        
-        val request = buildRequest(
-            method = method,
-            path = path,
-            host = "$host:$port",
-            cseq = cseq,
-            body = body,
-            contentType = contentType,
-            extraHeaders = extraHeaders
-        )
-        
-        // Encrypt if HAP session is enabled
-        if (hapSession.isEnabled) {
-            Ap2Log.log("RtspClient: Encrypting request (${request.size} bytes)")
-            val encrypted = hapSession.encrypt(request)
-            Ap2Log.log("RtspClient: Sending encrypted request (${encrypted.size} bytes)")
-            output!!.write(encrypted)
-        } else {
-            Ap2Log.log("RtspClient: Sending plaintext request (${request.size} bytes)")
-            output!!.write(request)
+        return synchronized(requestLock) {
+            cseq++
+
+            val request = buildRequest(
+                method = method,
+                path = path,
+                host = "$host:$port",
+                cseq = cseq,
+                body = body,
+                contentType = contentType,
+                extraHeaders = extraHeaders
+            )
+
+            // Encrypt if HAP session is enabled
+            if (hapSession.isEnabled) {
+                Ap2Log.log("RtspClient: Encrypting request (${request.size} bytes)")
+                val encrypted = hapSession.encrypt(request)
+                Ap2Log.log("RtspClient: Sending encrypted request (${encrypted.size} bytes)")
+                output!!.write(encrypted)
+            } else {
+                Ap2Log.log("RtspClient: Sending plaintext request (${request.size} bytes)")
+                output!!.write(request)
+            }
+            output!!.flush()
+
+            val response = try {
+                readResponse()
+            } catch (e: RtspException) {
+                lastError = e.message
+                throw e
+            }
+
+            // Non-2xx: record + log a typed failure; callers decide how to surface it.
+            if (response.statusCode !in 200..299) {
+                lastError = "$method $path failed: HTTP ${response.statusCode}"
+                Ap2Log.e("RtspClient", lastError!!)
+            } else {
+                lastError = null
+            }
+
+            response
         }
-        output!!.flush()
-        
-        val response = try {
-            readResponse()
-        } catch (e: RtspException) {
-            lastError = e.message
-            throw e
-        }
-        
-        // Non-2xx: record + log a typed failure; callers decide how to surface it.
-        if (response.statusCode !in 200..299) {
-            lastError = "$method $path failed: HTTP ${response.statusCode}"
-            Ap2Log.e("RtspClient", lastError!!)
-        } else {
-            lastError = null
-        }
-        
-        return response
     }
     
     /**

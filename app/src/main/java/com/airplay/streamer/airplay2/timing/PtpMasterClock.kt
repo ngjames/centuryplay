@@ -145,7 +145,21 @@ class PtpMasterClock(
     }
     
     /**
-     * Build PTP Announce message (64 bytes)
+     * Build PTP Announce message (64 bytes).
+     *
+     * IEEE 1588-2008 / 802.1AS announce body starts at offset 34:
+     *  34-35  currentUtcOffset             (2 bytes)
+     *  36     reserved                     (1 byte)
+     *  37     grandmasterPriority1         (1 byte)
+     *  38-41  clockQuality                 (4 bytes: class/accuracy/variance)
+     *  42     grandmasterPriority2         (1 byte)
+     *  43-50  grandmasterIdentity          (8 bytes)
+     *  51-52  stepsRemoved                 (2 bytes)
+     *  53     timeSource                   (1 byte)
+     *  54-55  grandmasterTimeBaseIndicator (2 bytes, 802.1AS, zero)
+     *  56-59  accumulatedSubdomainChangeRate (4 bytes, 802.1AS, zero)
+     *  60-63  zero padding
+     * Total body 30 bytes: 34 + 30 = 64. ANNOUNCE has no originTimestamp.
      */
     internal fun buildAnnounceMessage(seqId: Int): ByteArray {
         // Announce: controlField=0x05 (Other), logMessageInterval=0x00 (1s)
@@ -154,25 +168,19 @@ class PtpMasterClock(
         val msg = ByteBuffer.allocate(64).order(ByteOrder.BIG_ENDIAN)
         msg.put(header)
         
-        // originTimestamp (10 bytes) - zeros
-        msg.position(44)
+        msg.position(34)
         msg.putShort(37) // currentUtcOffset (TAI-UTC offset)
         msg.put(0x00.toByte()) // reserved
         msg.put(248.toByte()) // grandmasterPriority1 (Apple profile)
         msg.putInt(0xF8FEFFFF.toInt()) // clockQuality (class=248, accuracy=0xFE, variance=0xFFFF)
         msg.put(248.toByte()) // grandmasterPriority2
+        msg.putLong(clockId) // grandmasterIdentity
+        msg.putShort(0) // stepsRemoved
+        msg.put(0xA0.toByte()) // timeSource (Internal Oscillator)
         
-        // grandmasterIdentity (8 bytes) at offset 53
-        msg.position(53)
-        msg.putLong(clockId)
-        
-        // stepsRemoved (2 bytes) at offset 61
-        msg.position(61)
-        msg.putShort(0)
-        
-        // timeSource (1 byte) at offset 63
-        msg.put(0xA0.toByte()) // Internal Oscillator
-        
+        // 802.1AS extensions (gmTimeBaseIndicator, accumulatedSubdomainChangeRate)
+        // and the trailing padding stay zero: 34 + 30 = 64 bytes total, matching
+        // the messageLength field and what nqptp expects.
         return msg.array()
     }
     

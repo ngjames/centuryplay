@@ -1,8 +1,5 @@
 package com.airplay.streamer.airplay2.audio
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-
 /**
  * ALAC (Apple Lossless Audio Codec) Encoder for AirPlay 2
  * 
@@ -105,41 +102,7 @@ object AlacEncoder {
         
         return bits.toByteArray()
     }
-    
-    /**
-     * Generate a sine wave PCM frame for testing.
-     */
-    fun generateSineFrame(frequency: Double = 440.0, frameIndex: Int = 0): ByteArray {
-        val buffer = ByteBuffer.allocate(BYTES_PER_FRAME).order(ByteOrder.LITTLE_ENDIAN)
-        
-        val samplesOffset = frameIndex * SAMPLES_PER_FRAME
-        
-        for (i in 0 until SAMPLES_PER_FRAME) {
-            val t = (samplesOffset + i).toDouble() / SAMPLE_RATE
-            val sample = (Math.sin(2.0 * Math.PI * frequency * t) * 32767 * 0.5).toInt().toShort()
-            
-            // Left channel
-            buffer.putShort(sample)
-            // Right channel
-            buffer.putShort(sample)
-        }
-        
-        return buffer.array()
-    }
-    
-    /**
-     * Generate test audio frames
-     */
-    fun generateTestFrames(durationSeconds: Double, frequency: Double = 440.0): List<ByteArray> {
-        val totalSamples = (durationSeconds * SAMPLE_RATE).toInt()
-        val totalFrames = (totalSamples + SAMPLES_PER_FRAME - 1) / SAMPLES_PER_FRAME
-        
-        return (0 until totalFrames).map { frameIndex ->
-            val pcm = generateSineFrame(frequency, frameIndex)
-            encodeFrame(pcm)
-        }
-    }
-    
+
     /**
      * Encode raw PCM audio data into ALAC frames.
      */

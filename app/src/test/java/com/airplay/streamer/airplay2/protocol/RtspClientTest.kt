@@ -9,6 +9,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Byte-exact framing tests for [RtspClient]'s pure builders/parsers.
@@ -195,5 +199,127 @@ class RtspClientTest {
         val encrypted = app.encrypt(request)
         assertFalse(encrypted.contentEquals(request))
         assertArrayEquals(request, receiver.decrypt(encrypted))
+    }
+
+    // --- Concurrent request/response serialization ---
+
+    @Test
+    fun `concurrent sendRtsp calls are serialized - no response stealing and unique cseq`() {
+        // Regression test for the F2 race: /feedback keepalive, health-monitor
+        // probes and setVolume can overlap. Without serialization the socket
+        // writes/reads interleave and callers steal each other's responses.
+        val server = CseqEchoServer()
+        server.start()
+        val client = RtspClient("127.0.0.1", server.port)
+        try {
+            client.connect()
+            val failures = ConcurrentLinkedQueue<Throwable>()
+            val threads = (1..20).map { i ->
+                Thread {
+                    try {
+                        val token = "token-$i"
+                        val resp = client.sendRtsp(
+                            "POST", "/feedback",
+                            body = token.toByteArray(),
+                            contentType = "text/parameters"
+                        )
+                        assertEquals(200, resp.statusCode)
+                        // The echo server repeats the request body: a stolen
+                        // response would carry another caller's token.
+                        assertEquals(token, String(resp.body))
+                    } catch (t: Throwable) {
+                        failures.add(t)
+                    }
+                }
+            }
+            threads.forEach { it.start() }
+            threads.forEach { it.join(15_000) }
+            assertTrue("all concurrent callers must finish", threads.all { !it.isAlive })
+            assertTrue("no caller saw an exception: ${failures.toList()}", failures.isEmpty())
+            // cseq++ is serialized: every value 1..N used exactly once.
+            assertEquals(20, server.seenCseqs.size)
+            assertEquals((1..20).toSet(), server.seenCseqs.toSet())
+        } finally {
+            client.disconnect()
+            server.stop()
+        }
+    }
+
+    /**
+     * Plaintext RTSP echo server: answers one request at a time, echoing the
+     * request body and the request's CSeq. The client serializes requests, so
+     * a single accept + sequential serve loop is sufficient.
+     */
+    private class CseqEchoServer {
+        private val serverSocket = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val port: Int get() = serverSocket.localPort
+        val seenCseqs = CopyOnWriteArrayList<Int>()
+
+        fun start() {
+            Thread {
+                try {
+                    val socket = serverSocket.accept()
+                    socket.soTimeout = 15_000
+                    val input = socket.getInputStream()
+                    val output = socket.getOutputStream()
+                    val buf = ByteArray(4096)
+                    var buffered = ByteArray(0)
+                    while (true) {
+                        val headerEnd = indexOf(CRLF_CRLF, buffered)
+                        if (headerEnd >= 0) {
+                            val headerText = String(buffered, 0, headerEnd, Charsets.US_ASCII)
+                            var cseq = 0
+                            var contentLength = 0
+                            for (line in headerText.split("\r\n")) {
+                                when {
+                                    line.startsWith("CSeq:") ->
+                                        cseq = line.substringAfter(":").trim().toIntOrNull() ?: 0
+                                    line.startsWith("Content-Length:") ->
+                                        contentLength = line.substringAfter(":").trim().toIntOrNull() ?: 0
+                                }
+                            }
+                            val total = headerEnd + 4 + contentLength
+                            if (buffered.size >= total) {
+                                seenCseqs.add(cseq)
+                                val body = buffered.copyOfRange(headerEnd + 4, total)
+                                buffered = buffered.copyOfRange(total, buffered.size)
+                                val head = "RTSP/1.0 200 OK\r\nCSeq: $cseq\r\nContent-Length: ${body.size}\r\n\r\n"
+                                output.write(head.toByteArray(Charsets.US_ASCII))
+                                output.write(body)
+                                output.flush()
+                                continue
+                            }
+                        }
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        buffered += buf.copyOf(n)
+                    }
+                } catch (_: Exception) {
+                    // Client closed or mock stopped; terminate the serve loop.
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+        }
+
+        fun stop() {
+            runCatching { serverSocket.close() }
+        }
+
+        private fun indexOf(needle: ByteArray, haystack: ByteArray): Int {
+            if (haystack.size < needle.size) return -1
+            outer@ for (i in 0..haystack.size - needle.size) {
+                for (j in needle.indices) {
+                    if (haystack[i + j] != needle[j]) continue@outer
+                }
+                return i
+            }
+            return -1
+        }
+
+        private companion object {
+            val CRLF_CRLF = "\r\n\r\n".toByteArray(Charsets.US_ASCII)
+        }
     }
 }

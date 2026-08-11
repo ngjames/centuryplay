@@ -59,7 +59,6 @@ class AirPlay2Client(
     private var ntpTimingSocket: DatagramSocket? = null
     
     private var sessionUuid: String? = null
-    private var eventPort: Int = 0
     private var controlPort: Int = 0
     private var dataPort: Int = 0
     private var audioSharedSecret: ByteArray? = null
@@ -101,7 +100,7 @@ class AirPlay2Client(
      */
     suspend fun setupStreaming(): Boolean {
         // Step 1: Setup event channel (PTP timing)
-        eventPort = setupEventChannel()
+        setupEventChannel()
         
         // Step 2: Start timing master (PTP clock or NTP responder)
         if (timingMode == TimingMode.PTP) {
@@ -160,10 +159,14 @@ class AirPlay2Client(
     }
     
     /**
-     * Setup event channel and get event port
+     * Setup event channel. The receiver's advertised eventPort is unused by
+     * this sender (no event subscription is implemented); only session
+     * establishment is validated. The session UUID is pushed into
+     * [RtspClient.sessionUuid] so TEARDOWN targets the real session URI.
      */
-    private fun setupEventChannel(): Int {
+    private fun setupEventChannel() {
         sessionUuid = UUID.randomUUID().toString().uppercase()
+        rtspClient.sessionUuid = sessionUuid
         
         val setupBody = NSDictionary().apply {
             put("deviceID", "AA:BB:CC:DD:EE:FF")
@@ -201,9 +204,6 @@ class AirPlay2Client(
         if (response.statusCode != 200) {
             throw Exception("SETUP failed: ${response.statusCode}")
         }
-        
-        val plist = PropertyListParser.parse(ByteArrayInputStream(response.body)) as NSDictionary
-        return plist["eventPort"]?.toString()?.toInt() ?: 0
     }
     
     /**
@@ -394,9 +394,12 @@ class AirPlay2Client(
                         writeNtpTimestamp(resp, 24, ntpSec, ntpFrac)
                         socket.send(DatagramPacket(resp, packet.length, packet.address, packet.port))
                         val t1 = ntpToNanos(req, 24)
-                        val t2 = System.nanoTime()
+                        // t2/t3/t4 in the same NTP-nanos domain as t1, derived from
+                        // the same wall-clock reading used for the response stamps
+                        // (receiver-side t4 is not observable by the responder; ~t2).
+                        val t2 = ntpToNanos(ntpSec, ntpFrac)
                         val t3 = t2
-                        val t4 = t2 // receiver-side t4 not observable by responder; ~t2
+                        val t4 = t2
                         latestOffsetNs.set(NtpTiming.offsetFromTimingExchange(t1, t2, t3, t4))
                     }
                 }
@@ -414,11 +417,15 @@ class AirPlay2Client(
         b[o + 4] = (f shr 24).toByte(); b[o + 5] = (f shr 16).toByte(); b[o + 6] = (f shr 8).toByte(); b[o + 7] = f.toByte()
     }
 
+    /** NTP seconds/fraction (epoch 1900) as nanoseconds since the NTP epoch. */
+    private fun ntpToNanos(sec: Long, frac: Long): Long =
+        sec * 1_000_000_000L + (frac * 1_000_000_000L) / 0x1_0000_0000L
+
     private fun ntpToNanos(req: ByteArray, o: Int): Long {
         val sec = ((req[o].toLong() and 0xFF) shl 24) or ((req[o + 1].toLong() and 0xFF) shl 16) or
             ((req[o + 2].toLong() and 0xFF) shl 8) or (req[o + 3].toLong() and 0xFF)
         val frac = ((req[o + 4].toLong() and 0xFF) shl 24) or ((req[o + 5].toLong() and 0xFF) shl 16) or
             ((req[o + 6].toLong() and 0xFF) shl 8) or (req[o + 7].toLong() and 0xFF)
-        return sec * 1_000_000_000L + (frac * 1_000_000_000L) / 0x1_0000_0000L
+        return ntpToNanos(sec, frac)
     }
 }

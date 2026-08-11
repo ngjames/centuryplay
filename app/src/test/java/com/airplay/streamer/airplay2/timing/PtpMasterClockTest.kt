@@ -81,14 +81,65 @@ class PtpMasterClockTest {
     }
 
     @Test
+    fun `announce body matches IEEE 1588-2008 layout at offset 34`() {
+        val msg = clock.buildAnnounceMessage(1)
+        // messageLength header field must match the 64-byte wire size
+        assertEquals(64, msg.size)
+        assertEquals(64, ByteBuffer.wrap(msg, 2, 2).short.toInt() and 0xFFFF)
+        // 34-35 currentUtcOffset = 37 (TAI-UTC)
+        assertEquals(37, ByteBuffer.wrap(msg, 34, 2).short.toInt())
+        // 36 reserved = 0
+        assertEquals(0, msg[36].toInt() and 0xFF)
+        // 37 grandmasterPriority1 = 248
+        assertEquals(248, msg[37].toInt() and 0xFF)
+        // 38-41 clockQuality = 0xF8FEFFFF (class 248, accuracy 0xFE, variance 0xFFFF)
+        assertEquals(0xF8FEFFFF.toInt(), ByteBuffer.wrap(msg, 38, 4).int)
+        // 42 grandmasterPriority2 = 248
+        assertEquals(248, msg[42].toInt() and 0xFF)
+        // 43-50 grandmasterIdentity = clockId
+        assertEquals(clock.clockId, ByteBuffer.wrap(msg, 43, 8).long)
+        // 51-52 stepsRemoved = 0
+        assertEquals(0, ByteBuffer.wrap(msg, 51, 2).short.toInt())
+        // 53 timeSource = 0xA0 (Internal Oscillator)
+        assertEquals(0xA0, msg[53].toInt() and 0xFF)
+        // 54-55 gmTimeBaseIndicator / 56-59 accumulatedSubdomainChangeRate zero
+        assertArrayEquals(ByteArray(6), msg.copyOfRange(54, 60))
+        // 60-63 zero padding
+        assertArrayEquals(ByteArray(4), msg.copyOfRange(60, 64))
+    }
+
+    @Test
     fun `announce header clockIdentity equals grandmasterIdentity`() {
         val msg = clock.buildAnnounceMessage(1)
         // header clockIdentity at bytes 20-27
         val headerClockId = ByteBuffer.wrap(msg, 20, 8).long
-        // grandmasterIdentity at bytes 53-60
-        val gmIdentity = ByteBuffer.wrap(msg, 53, 8).long
+        // grandmasterIdentity at bytes 43-50 (IEEE 1588-2008 announce body)
+        val gmIdentity = ByteBuffer.wrap(msg, 43, 8).long
         assertEquals(clock.clockId, headerClockId)
         assertEquals(clock.clockId, gmIdentity)
+    }
+
+    @Test
+    fun `sync body is a zeroed 10-byte originTimestamp at offset 34`() {
+        val msg = clock.buildSyncMessage(1)
+        // SYNC (two-step): originTimestamp (10 bytes) at 34, all zeros
+        assertArrayEquals(ByteArray(10), msg.copyOfRange(34, 44))
+        assertEquals(44, msg.size)
+        assertEquals(44, ByteBuffer.wrap(msg, 2, 2).short.toInt() and 0xFFFF)
+    }
+
+    @Test
+    fun `follow up carries preciseOriginTimestamp at offset 34`() {
+        // originTimestampNs = 2s + 500ms -> seconds=2, nanoseconds=500000000
+        val msg = clock.buildFollowUpMessage(1, 2_500_000_000L)
+        // 34-35 secondsHi (2 seconds < 2^32)
+        assertEquals(0, ByteBuffer.wrap(msg, 34, 2).short.toInt())
+        // 36-39 secondsLo = 2
+        assertEquals(2, ByteBuffer.wrap(msg, 36, 4).int)
+        // 40-43 nanoseconds = 500000000 (0x1DCD6500)
+        assertEquals(500_000_000, ByteBuffer.wrap(msg, 40, 4).int)
+        // Follow_Up has no reserved padding between timestamp and TLV
+        assertEquals(0x0003, ByteBuffer.wrap(msg, 44, 2).short.toInt() and 0xFFFF)
     }
 
     @Test

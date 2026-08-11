@@ -38,7 +38,7 @@ object NetworkUtils {
                 if (address != null) return address
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Ap2Log.e("NetworkUtils", "Failed to resolve local IPv4 address", e)
         }
         
         return "127.0.0.1"

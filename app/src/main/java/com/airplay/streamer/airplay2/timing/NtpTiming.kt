@@ -4,10 +4,7 @@ package com.airplay.streamer.airplay2.timing
  * Pure NTP timing math for the AirPlay 2 NTP mode (default timing protocol).
  *
  * The sender and receiver clocks differ by an offset. NTP mode derives the
- * offset from the PT 82/83 timing-port exchange; anchors are then stamped in
- * the receiver clock frame by adding that offset to the local monotonic time
- * (plan todo 9; NOT mtrudel's PTP-slave one-way-offset approach, which
- * belongs to the deferred PTP-slave path).
+ * offset from the PT 82/83 timing-port exchange.
  */
 internal object NtpTiming {
 
@@ -26,20 +23,4 @@ internal object NtpTiming {
      */
     fun offsetFromTimingExchange(t1Ns: Long, t2Ns: Long, t3Ns: Long, t4Ns: Long): Long =
         ((t2Ns - t1Ns) + (t3Ns - t4Ns)) / 2
-
-    /**
-     * RTP timestamp for an anchor packet in the receiver clock frame.
-     *
-     * @param localNowNs local monotonic clock (System.nanoTime) at the anchor
-     * @param offsetNs clock offset (see [offsetFromTimingExchange])
-     * @param baseRtpTime RTP timestamp at the stream base (e.g. FLUSH rtptime 0)
-     * @param framesPlayed frames of [SAMPLES_PER_FRAME] samples played so far
-     * @return RTP timestamp for the anchor
-     */
-    fun stampAnchor(localNowNs: Long, offsetNs: Long, baseRtpTime: Long, framesPlayed: Long): Long {
-        // Receiver-clock "now" in the RTP tick domain (kept for clarity of the conversion).
-        @Suppress("UNUSED_VARIABLE")
-        val receiverNowNs = localNowNs + offsetNs
-        return baseRtpTime + framesPlayed * SAMPLES_PER_FRAME
-    }
 }

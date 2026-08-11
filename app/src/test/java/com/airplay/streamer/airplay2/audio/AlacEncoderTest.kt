@@ -141,7 +141,7 @@ class AlacEncoderTest {
 
     @Test
     fun generateSineFrame_sanity() {
-        val pcm = AlacEncoder.generateSineFrame(440.0, 0)
+        val pcm = TestAudioFrames.generateSineFrame(440.0, 0)
         assertEquals(1408, pcm.size)
 
         val buf = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
