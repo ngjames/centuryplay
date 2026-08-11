@@ -41,8 +41,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         viewModelScope.launch {
             repository.devices.collect { devices ->
-                // Show devices that support RAOP (AirPlay 1).
-                val filtered = devices.filter { it.protocolVersion == 1 || it.raopPort != null }
+                // Show all discovered devices: RAOP (AirPlay 1) and AirPlay 2 (port 7000).
+                val filtered = devices
                 
                 val message = if (filtered.isEmpty()) {
                     "searching for airplay speakers..."

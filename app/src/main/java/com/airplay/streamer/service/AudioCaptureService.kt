@@ -60,6 +60,9 @@ class AudioCaptureService : Service() {
         const val EXTRA_RESULT_DATA = "result_data"
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
+        const val EXTRA_RAOP_PORT = "raop_port"
+        const val EXTRA_PROTOCOL_PREFERENCE = "protocol_preference"
+        const val EXTRA_AP2_TIMING = "ap2_timing"
         const val EXTRA_DEVICE_NAME = "device_name"
         const val EXTRA_DEVICE_FEATURES = "device_features"
 
@@ -105,11 +108,15 @@ class AudioCaptureService : Service() {
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
                 val host = intent.getStringExtra(EXTRA_HOST) ?: return START_NOT_STICKY
                 val port = intent.getIntExtra(EXTRA_PORT, 0)
+                val raopPort = intent.getIntExtra(EXTRA_RAOP_PORT, -1).takeIf { it > 0 }
+                // Auto-connect restores the protocol/timing snapshot via extras (-1 = use prefs).
+                val protocolPrefOverride = intent.getIntExtra(EXTRA_PROTOCOL_PREFERENCE, -1).takeIf { it >= 0 }
+                val ap2TimingOverride = intent.getIntExtra(EXTRA_AP2_TIMING, -1).takeIf { it >= 0 }
                 deviceName = intent.getStringExtra(EXTRA_DEVICE_NAME) ?: "AirPlay Speaker"
                 val featuresJson = intent.getStringExtra(EXTRA_DEVICE_FEATURES) ?: ""
 
                 if (resultData != null) {
-                    startCapture(resultCode, resultData, host, port, featuresJson)
+                    startCapture(resultCode, resultData, host, port, raopPort, featuresJson, protocolPrefOverride, ap2TimingOverride)
                 }
             }
             ACTION_STOP -> {
@@ -120,7 +127,7 @@ class AudioCaptureService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startCapture(resultCode: Int, resultData: Intent, host: String, port: Int, featuresJson: String) {
+    private fun startCapture(resultCode: Int, resultData: Intent, host: String, port: Int, raopPort: Int?, featuresJson: String, protocolPrefOverride: Int?, ap2TimingOverride: Int?) {
         if (isCapturing) return
 
         // Start foreground with notification
@@ -139,21 +146,23 @@ class AudioCaptureService : Service() {
                 }
 
                 // Protocol preference from SharedPreferences 'airplay_prefs':
-                // 0=Auto, 1=AirPlay 1 (RAOP), 2=AirPlay 2. EXTRA_PORT already
-                // carries raopPort ?: port; the AP2 port arrives separately in
-                // todo 13, so raopPort is null here.
+                // 0=Auto, 1=AirPlay 1 (RAOP), 2=AirPlay 2. EXTRA_PORT carries the
+                // AP2 port (device.port, typically 7000); the RAOP port arrives
+                // separately in EXTRA_RAOP_PORT. Auto-connect may override the
+                // preference via extras (todo 13).
                 val prefs = getSharedPreferences("airplay_prefs", MODE_PRIVATE)
-                val protocolPref = prefs.getInt("protocol_preference", 0)
-                val protocol = resolveProtocol(protocolPref, port, null)
+                val protocolPref = protocolPrefOverride ?: prefs.getInt("protocol_preference", 0)
+                val protocol = resolveProtocol(protocolPref, port, raopPort)
                 LogServer.log("Protocol preference: $protocolPref -> $protocol")
 
                 if (protocol == Protocol.AIRPLAY2) {
-                    startAirPlay2Stream(host, prefs)
+                    startAirPlay2Stream(host, prefs, ap2TimingOverride)
                     return@launch
                 }
 
                 // AirPlay 1 (RAOP) Path
-                LogServer.log("Starting AirPlay 1 (RAOP) connection to $host:$port")
+                val raopConnectPort = raopPort ?: port
+                LogServer.log("Starting AirPlay 1 (RAOP) connection to $host:$raopConnectPort")
                 val deviceFeatures = featuresJson.split(";")
                     .mapNotNull { pair ->
                         val parts = pair.split("=", limit = 2)
@@ -167,7 +176,7 @@ class AudioCaptureService : Service() {
                     return@launch
                 }
 
-                raopClient = RaopClient(host, port, deviceFeatures)
+                raopClient = RaopClient(host, raopConnectPort, deviceFeatures)
                 
                 // Set callback to handle server disconnects
                 raopClient?.callback = object : RaopClient.StreamingCallback {
@@ -281,8 +290,8 @@ class AudioCaptureService : Service() {
      * loop. Any connect/pair/setup failure goes through [failStream] so the
      * service is never left half-running (dev-branch catch-path bug fix).
      */
-    private suspend fun startAirPlay2Stream(host: String, prefs: android.content.SharedPreferences) {
-        val timingMode = if (prefs.getInt("ap2_timing", 0) == 1) TimingMode.PTP else TimingMode.NTP
+    private suspend fun startAirPlay2Stream(host: String, prefs: android.content.SharedPreferences, ap2TimingOverride: Int?) {
+        val timingMode = if ((ap2TimingOverride ?: prefs.getInt("ap2_timing", 0)) == 1) TimingMode.PTP else TimingMode.NTP
         LogServer.log("Starting AirPlay 2 connection to $host:$AP2_PORT (timing: $timingMode)")
         val client = AirPlay2Client(host, AP2_PORT, timingMode)
         ap2Client = client

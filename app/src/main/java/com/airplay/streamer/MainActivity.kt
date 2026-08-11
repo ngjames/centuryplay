@@ -25,6 +25,8 @@ import com.airplay.streamer.databinding.ActivityMainBinding
 import com.airplay.streamer.discovery.AirPlayDevice
 import com.airplay.streamer.raop.RaopCapabilities
 import com.airplay.streamer.service.AudioCaptureService
+import com.airplay.streamer.service.Protocol
+import com.airplay.streamer.service.resolveProtocol
 import com.airplay.streamer.ui.MainViewModel
 import com.airplay.streamer.ui.SpeakerAdapter
 import com.airplay.streamer.util.LogServer
@@ -39,6 +41,9 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingDevice: AirPlayDevice? = null
     private var hasAttemptedAutoConnect = false
+    // Protocol/timing snapshot restored from auto-connect prefs (todo 13): -1 = not restoring.
+    private var pendingProtocolPreference: Int = -1
+    private var pendingAp2Timing: Int = -1
 
     private val mediaProjectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -51,6 +56,8 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show()
         }
         pendingDevice = null
+        pendingProtocolPreference = -1
+        pendingAp2Timing = -1
     }
 
     private val permissionLauncher = registerForActivityResult(
@@ -61,6 +68,9 @@ class MainActivity : AppCompatActivity() {
             pendingDevice?.let { requestMediaProjection(it) }
         } else {
             Toast.makeText(this, "Permissions required for audio capture", Toast.LENGTH_LONG).show()
+            pendingDevice = null
+            pendingProtocolPreference = -1
+            pendingAp2Timing = -1
         }
     }
 
@@ -267,6 +277,10 @@ class MainActivity : AppCompatActivity() {
                                 val match = state.devices.find { it.host == lastHost && it.port == lastPort }
                                 if (match != null) {
                                     hasAttemptedAutoConnect = true
+                                    // Restore the protocol/timing preference saved with the
+                                    // last device so the service picks the same streaming path.
+                                    pendingProtocolPreference = prefs.getInt("protocol_preference", -1)
+                                    pendingAp2Timing = prefs.getInt("ap2_timing", -1)
                                     Toast.makeText(this@MainActivity, "Auto-connecting to ${match.displayName}...", Toast.LENGTH_SHORT).show()
                                     viewModel.selectDevice(match)
                                     checkPermissionsAndStart(match)
@@ -408,7 +422,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionsAndStart(device: AirPlayDevice) {
-        if (RaopCapabilities.requiresUnsupportedFairPlay(device.features)) {
+        val prefs = getSharedPreferences(SettingsActivity.PREFS_NAME, MODE_PRIVATE)
+        val protocolPref = pendingProtocolPreference.takeIf { it >= 0 } ?: prefs.getInt("protocol_preference", 0)
+        val protocol = resolveProtocol(protocolPref, device.port, device.raopPort)
+        // FairPlay is only required on the RAOP (AirPlay 1) path; AirPlay 2
+        // audio does not need FairPlay, so AP2-only devices must not be gated.
+        if (protocol == Protocol.AIRPLAY1 && RaopCapabilities.requiresUnsupportedFairPlay(device.features)) {
             showFairPlayUnsupportedDialog(device)
             return
         }
@@ -450,16 +469,29 @@ class MainActivity : AppCompatActivity() {
             putExtra(AudioCaptureService.EXTRA_RESULT_CODE, resultCode)
             putExtra(AudioCaptureService.EXTRA_RESULT_DATA, data)
             putExtra(AudioCaptureService.EXTRA_HOST, device.host)
-            putExtra(AudioCaptureService.EXTRA_PORT, device.raopPort ?: device.port)
+            putExtra(AudioCaptureService.EXTRA_PORT, device.port)
+            putExtra(AudioCaptureService.EXTRA_RAOP_PORT, device.raopPort ?: -1)
+            if (pendingProtocolPreference >= 0) {
+                putExtra(AudioCaptureService.EXTRA_PROTOCOL_PREFERENCE, pendingProtocolPreference)
+            }
+            if (pendingAp2Timing >= 0) {
+                putExtra(AudioCaptureService.EXTRA_AP2_TIMING, pendingAp2Timing)
+            }
+            pendingProtocolPreference = -1
+            pendingAp2Timing = -1
             putExtra(AudioCaptureService.EXTRA_DEVICE_NAME, device.displayName)
             putExtra(AudioCaptureService.EXTRA_DEVICE_FEATURES,
                 device.features.entries.joinToString(";") { "${it.key}=${it.value}" })
         }
         
-        // Save Last Device for Auto-Connect
-        getSharedPreferences(SettingsActivity.PREFS_NAME, MODE_PRIVATE).edit()
+        // Save Last Device for Auto-Connect (host/port + protocol/timing snapshot
+        // so auto-connect can restore the same streaming path via extras)
+        val prefs = getSharedPreferences(SettingsActivity.PREFS_NAME, MODE_PRIVATE)
+        prefs.edit()
             .putString("last_device_host", device.host)
             .putInt("last_device_port", device.port)
+            .putInt("protocol_preference", prefs.getInt("protocol_preference", 0))
+            .putInt("ap2_timing", prefs.getInt("ap2_timing", 0))
             .apply()
 
         startForegroundService(serviceIntent)
