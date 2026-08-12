@@ -106,7 +106,7 @@ class AudioCaptureService : Service() {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                val host = intent.getStringExtra(EXTRA_HOST) ?: return START_NOT_STICKY
+                val host = intent.getStringExtra(EXTRA_HOST)
                 val port = intent.getIntExtra(EXTRA_PORT, 0)
                 val raopPort = intent.getIntExtra(EXTRA_RAOP_PORT, -1).takeIf { it > 0 }
                 // Auto-connect restores the protocol/timing snapshot via extras (-1 = use prefs).
@@ -115,9 +115,20 @@ class AudioCaptureService : Service() {
                 deviceName = intent.getStringExtra(EXTRA_DEVICE_NAME) ?: "AirPlay Speaker"
                 val featuresJson = intent.getStringExtra(EXTRA_DEVICE_FEATURES) ?: ""
 
-                if (resultData != null) {
-                    startCapture(resultCode, resultData, host, port, raopPort, featuresJson, protocolPrefOverride, ap2TimingOverride)
+                // startForeground() must run before any early return: on
+                // targetSdk 35 the system crashes with
+                // ForegroundServiceDidNotStartInTimeException if a started
+                // service skips it for more than 5s.
+                startForeground(NOTIFICATION_ID, createNotification())
+
+                if (host == null || resultData == null) {
+                    LogServer.log("AudioCaptureService: missing host/resultData extras - stopping")
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
+
+                startCapture(resultCode, resultData, host, port, raopPort, featuresJson, protocolPrefOverride, ap2TimingOverride)
             }
             ACTION_STOP -> {
                 stopCapture()
@@ -203,6 +214,7 @@ class AudioCaptureService : Service() {
                 if (!connected) {
                     LogServer.log("Failed to connect to RAOP server")
                     stopCapture()
+                    stopSelf()
                     return@launch
                 }
 
@@ -278,7 +290,15 @@ class AudioCaptureService : Service() {
                 if (bytesRead > 0) {
                     raopClient?.streamAudio(buffer.copyOf(bytesRead))
                 } else if (bytesRead < 0) {
-                    // Error reading audio
+                    // Negative read: ERROR_DEAD_OBJECT (-6, MediaProjection
+                    // revoked) or ERROR_INVALID_OPERATION. Tear down via the
+                    // same failure path as other errors instead of leaving the
+                    // service foreground with stale UI.
+                    LogServer.log("Audio capture read error ($bytesRead) - stopping stream")
+                    if (isCapturing) {
+                        stopCapture()
+                        stopSelf()
+                    }
                     break
                 }
             }
@@ -387,16 +407,30 @@ class AudioCaptureService : Service() {
         stopSelf()
     }
 
+    private val stopLock = Any()
+
     private fun stopCapture() {
-        if (!isCapturing && raopClient == null && ap2Client == null) return // Already stopped
-        
+        // Null the client references synchronously under the lock instead of
+        // in the disconnect coroutines' finally blocks: a quick stop->start
+        // otherwise lets the old coroutine's finally null out a freshly
+        // assigned client, silently killing the new stream.
+        var raopToDisconnect: RaopClient? = null
+        var ap2ToDisconnect: AirPlay2Client? = null
+        synchronized(stopLock) {
+            if (!isCapturing && raopClient == null && ap2Client == null) return // Already stopped
+            isCapturing = false
+            // Clear callback first to prevent recursion (disconnect triggers callback -> triggers stopCapture)
+            raopClient?.callback = null
+            raopToDisconnect = raopClient
+            raopClient = null
+            ap2ToDisconnect = ap2Client
+            ap2Client = null
+        }
+
         LogServer.log("stopCapture() called - cleaning up")
         
         // Pause media playback so audio doesn't continue on phone speaker
         pauseMediaPlayback()
-        
-        // Set flag first to stop loops
-        isCapturing = false
         
         // Cancel the capture job
         captureJob?.cancel()
@@ -418,28 +452,25 @@ class AudioCaptureService : Service() {
         audioRecord = null
 
         // Disconnect clients in background to avoid blocking main thread
-        // IMPORTANT: Clear callback first to prevent recursion (disconnect triggers callback -> triggers stopCapture)
-        raopClient?.callback = null
-        
-        serviceScope.launch(Dispatchers.IO) {
-            try {
-                raopClient?.disconnect()
-            } catch (e: Exception) {
-                LogServer.log("Error disconnecting RAOP client: ${e.message}")
-            } finally {
-                raopClient = null
+        raopToDisconnect?.let { client ->
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    client.disconnect()
+                } catch (e: Exception) {
+                    LogServer.log("Error disconnecting RAOP client: ${e.message}")
+                }
             }
         }
 
         // Full AP2 teardown: disconnect() stops the NTP responder/PTP clock,
         // sends TEARDOWN, stops /feedback keepalive and closes the RTSP socket.
-        serviceScope.launch(Dispatchers.IO) {
-            try {
-                ap2Client?.disconnect()
-            } catch (e: Exception) {
-                LogServer.log("Error disconnecting AirPlay 2 client: ${e.message}")
-            } finally {
-                ap2Client = null
+        ap2ToDisconnect?.let { client ->
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    client.disconnect()
+                } catch (e: Exception) {
+                    LogServer.log("Error disconnecting AirPlay 2 client: ${e.message}")
+                }
             }
         }
 

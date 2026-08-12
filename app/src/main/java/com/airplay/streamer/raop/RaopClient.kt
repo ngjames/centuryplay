@@ -72,8 +72,8 @@ class RaopClient(
     private val isConnected = AtomicBoolean(false)
     private val isStreaming = AtomicBoolean(false)
 
-    private var rtpSequence: Int = Random.nextInt(0xFFFF)
-    private var rtpTimestamp: Long = Random.nextLong(0xFFFFFFFFL)
+    internal var rtpSequence: Int = Random.nextInt(0xFFFF)
+    internal var rtpTimestamp: Long = Random.nextLong(0xFFFFFFFFL)
     private val ssrc: Int = Random.nextInt()
     private val alacEncoder = AlacEncoder()
 
@@ -424,7 +424,7 @@ class RaopClient(
     private fun record(): Boolean {
         val headers = mapOf(
             "Range" to "npt=0-",
-            "RTP-Info" to "seq=$rtpSequence;rtptime=$rtpTimestamp"
+            "RTP-Info" to "seq=$rtpSequence;rtptime=${rtpTimestamp and 0xFFFFFFFFL}"
         )
         sendRtspRequestDirect("RECORD", "rtsp://$localIp/$localSessionId", headers, sessionId = serverSessionId)
         val response = parseRtspResponse()
@@ -448,23 +448,39 @@ class RaopClient(
         val bufferBytes = synchronized(audioBuffer) { audioBuffer.toByteArray() }
         if (bufferBytes.size >= packetSize) {
             var offset = 0
-            while (offset + packetSize <= bufferBytes.size) {
-                val chunk = bufferBytes.copyOfRange(offset, offset + packetSize)
-                val payloadData = if (useFairPlayStub) {
-                    alacEncoder.encode(chunk)
-                } else {
-                    val beData = swapEndianness(chunk)
-                    if (useEncryption) encryptAudio(beData) else beData
-                }
-                
-                val rtpPacket = buildRtpPacket(payloadData)
-                val address = InetAddress.getByName(host)
-                val packet = DatagramPacket(rtpPacket, rtpPacket.size, address, serverPort)
-                audioSocket?.send(packet)
+            try {
+                while (offset + packetSize <= bufferBytes.size) {
+                    val chunk = bufferBytes.copyOfRange(offset, offset + packetSize)
+                    val payloadData = if (useFairPlayStub) {
+                        alacEncoder.encode(chunk)
+                    } else {
+                        val beData = swapEndianness(chunk)
+                        if (useEncryption) encryptAudio(beData) else beData
+                    }
+                    
+                    val rtpPacket = buildRtpPacket(payloadData)
+                    val address = InetAddress.getByName(host)
+                    val packet = DatagramPacket(rtpPacket, rtpPacket.size, address, serverPort)
+                    audioSocket?.send(packet)
 
-                rtpSequence = (rtpSequence + 1) and 0xFFFF
-                rtpTimestamp += FRAMES_PER_PACKET
-                offset += packetSize
+                    rtpSequence = (rtpSequence + 1) and 0xFFFF
+                    rtpTimestamp += FRAMES_PER_PACKET
+                    offset += packetSize
+                }
+            } catch (e: java.net.SocketException) {
+                // send() on a closed socket (stop/disconnect race) must not
+                // crash the capture coroutine. Benign once we're no longer
+                // streaming or the socket is gone; real mid-stream failures
+                // are surfaced instead of being swallowed.
+                synchronized(audioBuffer) { audioBuffer.reset() }
+                val benign = !isStreaming.get() || audioSocket == null || audioSocket?.isClosed == true
+                if (benign) {
+                    LogServer.log("RaopClient: audio socket closed; stopping send (${e.message})")
+                } else {
+                    LogServer.e(TAG, "RaopClient: audio socket send failed", e)
+                    isStreaming.set(false)
+                }
+                return@withContext
             }
             synchronized(audioBuffer) {
                 audioBuffer.reset()
@@ -515,6 +531,16 @@ class RaopClient(
         controlSocket = null
         timingSocket = null
         serverSessionId = null
+        // Reset per-stream state so a reconnect starts clean: stale PCM would
+        // otherwise be prepended to the first new packet, and a grown-out
+        // timestamp would corrupt RTP header fields.
+        synchronized(audioBuffer) { audioBuffer.reset() }
+        rtpSequence = Random.nextInt(0xFFFF)
+        rtpTimestamp = Random.nextLong(0xFFFFFFFFL)
+        syncSequence = 0
+        serverPort = 0
+        serverControlPort = 0
+        serverTimingPort = 0
         logD("Teardown complete")
         callback?.onDisconnected()
     }
@@ -591,12 +617,14 @@ class RaopClient(
         return Base64.getEncoder().encodeToString(data)
     }
 
-    private fun buildRtpPacket(data: ByteArray): ByteArray {
+    internal fun buildRtpPacket(data: ByteArray): ByteArray {
         val h = ByteArray(12)
         h[0] = 0x80.toByte(); h[1] = 0x60.toByte()
         h[2] = (rtpSequence shr 8).toByte(); h[3] = rtpSequence.toByte()
-        h[4] = (rtpTimestamp shr 24).toByte(); h[5] = (rtpTimestamp shr 16).toByte()
-        h[6] = (rtpTimestamp shr 8).toByte(); h[7] = rtpTimestamp.toByte()
+        // RTP timestamps are 32-bit; mask the Long so the header wraps cleanly.
+        val ts = rtpTimestamp and 0xFFFFFFFFL
+        h[4] = (ts shr 24).toByte(); h[5] = (ts shr 16).toByte()
+        h[6] = (ts shr 8).toByte(); h[7] = ts.toByte()
         h[8] = (ssrc shr 24).toByte(); h[9] = (ssrc shr 16).toByte()
         h[10] = (ssrc shr 8).toByte(); h[11] = ssrc.toByte()
         return h + data
@@ -678,14 +706,15 @@ class RaopClient(
         }.start()
     }
 
-    private fun buildSyncPacket(rtp: Long, time: Long, lat: Long): ByteArray {
+    internal fun buildSyncPacket(rtp: Long, time: Long, lat: Long): ByteArray {
         val p = ByteArray(20)
         p[0] = if (syncSequence == 0) 0x90.toByte() else 0x80.toByte()
         p[1] = 0xd4.toByte(); p[2] = (syncSequence shr 8).toByte(); p[3] = syncSequence.toByte()
-        p[4] = (rtp shr 24).toByte(); p[5] = (rtp shr 16).toByte(); p[6] = (rtp shr 8).toByte(); p[7] = rtp.toByte()
+        val rtp32 = rtp and 0xFFFFFFFFL
+        p[4] = (rtp32 shr 24).toByte(); p[5] = (rtp32 shr 16).toByte(); p[6] = (rtp32 shr 8).toByte(); p[7] = rtp32.toByte()
         val s = (time / 1000) + 2208988800L; val f = ((time % 1000) * 4294967296.0 / 1000.0).toLong()
         writeNtpTimestamp(p, 8, s, f)
-        val n = rtp + lat
+        val n = (rtp + lat) and 0xFFFFFFFFL
         p[16] = (n shr 24).toByte(); p[17] = (n shr 16).toByte(); p[18] = (n shr 8).toByte(); p[19] = n.toByte()
         return p
     }

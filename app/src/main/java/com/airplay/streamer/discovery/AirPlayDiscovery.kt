@@ -76,12 +76,22 @@ class AirPlayDiscovery(
             InetAddress.getByAddress(ipBytes)
         }
 
-        // Create jmDNS instance
+        // Create jmDNS instance. JmDNS.create can throw on some Android
+        // 14/15 builds (e.g. EPERM); never let that crash the collector.
         val jmdnsStartTime = System.currentTimeMillis()
-        jmDNS = withContext(Dispatchers.IO) {
-            JmDNS.create(localAddress, "AirPlayDiscovery")
+        val jmdnsResult = runCatching {
+            withContext(Dispatchers.IO) {
+                JmDNS.create(localAddress, "AirPlayDiscovery")
+            }
         }
         android.util.Log.d("PROFILING", "JmDNS.create finished in ${System.currentTimeMillis() - jmdnsStartTime}ms")
+
+        val createdJmDns = jmdnsResult.getOrElse { e ->
+            Log.e(TAG, "JmDNS.create failed: ${e.message}")
+            trySend(DiscoveryEvent.DiscoveryFailed(e.message ?: "JmDNS.create failed"))
+            return@callbackFlow
+        }
+        jmDNS = createdJmDns
 
         // Listener for AirPlay 2 services (_airplay._tcp)
         val airplay2Listener = object : ServiceListener {
@@ -169,7 +179,8 @@ class AirPlayDiscovery(
             jmDNS?.removeServiceListener(RAOP_SERVICE_TYPE, raopListener)
             jmDNS?.close()
             jmDNS = null
-            multicastLock?.release()
+            // Guard against a concurrent stop() releasing the lock first.
+            multicastLock?.let { lock -> if (lock.isHeld) lock.release() }
             multicastLock = null
             discoveredDevices.clear()
         }
@@ -241,4 +252,5 @@ sealed class DiscoveryEvent {
     data object DiscoveryStarted : DiscoveryEvent()
     data class DeviceFound(val device: AirPlayDevice) : DiscoveryEvent()
     data class DeviceLost(val device: AirPlayDevice) : DiscoveryEvent()
+    data class DiscoveryFailed(val error: String) : DiscoveryEvent()
 }

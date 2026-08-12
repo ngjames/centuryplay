@@ -109,6 +109,11 @@ class RtspClient(
         extraHeaders: Map<String, String> = emptyMap()
     ): RtspResponse {
         return synchronized(requestLock) {
+            // sendRtsp can race a disconnect() (health check vs teardown); fail
+            // with the typed exception instead of an NPE on the nulled output.
+            if (socket == null || output == null) {
+                throw RtspException("Connection closed")
+            }
             cseq++
 
             val request = buildRequest(
