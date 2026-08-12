@@ -20,11 +20,22 @@
         android:layout_height="match_parent"
         android:fillViewport="true">
 
+        <!-- Max-width container so the layout doesn't stretch edge-to-edge on TV (1080p/4K).
+             On phones (<720dp) the content simply fills the screen as before. -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
         <LinearLayout
             android:id="@+id/mainContent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            app:layout_constraintWidth_default="wrap"
+            app:maxWidth="720dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
 
             <!-- Header with status bar padding applied programmatically -->
             <LinearLayout
@@ -183,7 +194,7 @@
                         android:layout_height="wrap_content"
                         android:paddingHorizontal="16dp"
                         android:paddingVertical="8dp"
-                        android:text="tap a speaker to select it"
+                        android:text="@string/speaker_hint"
                         android:textSize="12sp"
                         android:textColor="?attr/colorOnSurfaceVariant"
                         android:alpha="0.6"
@@ -296,7 +307,9 @@
                             android:layout_width="0dp"
                             android:layout_height="48dp"
                             android:layout_weight="1"
-                            android:layout_marginHorizontal="8dp"/>
+                            android:layout_marginHorizontal="8dp"
+                            android:focusable="true"
+                            android:contentDescription="@string/volume"/>
                     </LinearLayout>
 
                     <!-- Now Playing Info (visible when streaming) -->
@@ -336,7 +349,7 @@
                             android:layout_marginStart="12dp"
                             android:orientation="vertical">
 
-                            <TextView
+                            <com.airplay.streamer.ui.MarqueeTextView
                                 android:id="@+id/nowPlayingTitle"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
@@ -346,8 +359,6 @@
                                 android:singleLine="true"
                                 android:ellipsize="marquee"
                                 android:marqueeRepeatLimit="marquee_forever"
-                                android:focusable="true"
-                                android:focusableInTouchMode="true"
                                 tools:text="Song Title"/>
 
                             <TextView
@@ -373,5 +384,6 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
     </androidx.core.widget.NestedScrollView>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

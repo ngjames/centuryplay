@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.util.AttributeSet
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.LinearInterpolator
@@ -133,6 +134,16 @@ class WavySlider @JvmOverloads constructor(
         val thumbX = padding + trackWidth * value
         val thumbRadius = 10 * density
 
+        // Focus ring: thicker accent outline around the thumb when D-pad focused
+        if (isFocused) {
+            val focusRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 4 * density
+                color = thumbPaint.color
+            }
+            canvas.drawCircle(thumbX, centerY, thumbRadius + 6 * density, focusRingPaint)
+        }
+
         // Border
         canvas.drawCircle(thumbX, centerY, thumbRadius + 2 * density, thumbBorderPaint)
         // Thumb fill
@@ -177,10 +188,30 @@ class WavySlider @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 parent.requestDisallowInterceptTouchEvent(false)
+                performClick()
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    /** D-pad / TV remote volume adjustments: each press nudges the value by 5%. */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val step = 0.05f
+        val newValue = when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MINUS -> value - step
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_PLUS -> value + step
+            else -> return super.onKeyDown(keyCode, event)
+        }
+        value = newValue.coerceIn(0f, 1f)
+        onValueChangeListener?.invoke(value, true)
+        invalidate()
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     fun setValue(newValue: Float) {

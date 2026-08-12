@@ -7,6 +7,7 @@
     android:layout_height="wrap_content"
     android:layout_margin="6dp"
     style="@style/Widget.AirPlay.Card.Expressive"
+    android:foreground="?attr/selectableItemBackground"
     app:cardCornerRadius="20dp"
     app:cardElevation="4dp"
     app:rippleColor="?attr/colorPrimaryContainer">

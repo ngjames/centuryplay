@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android TV banner (320x180, xhdpi landscape). Dark background with the
+     launcher AirPlay broadcast icon centered. Geometry derived from
+     ic_launcher_foreground.xml scaled 2.2x and translated to (160, 90). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Dark background -->
+    <path
+        android:fillColor="#FF0F1115"
+        android:pathData="M0,0 h320 v180 h-320 Z"/>
+
+    <!-- Android head (dome shape) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M116,160.4 L116,138.4 A44,44 0 0,1 204,138.4 L204,160.4 Z"/>
+
+    <!-- Left antenna -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M133.6,98.8 L124.8,81.2"/>
+
+    <!-- Right antenna -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M186.4,98.8 L195.2,81.2"/>
+
+    <!-- AirPlay broadcast waves (concentric arcs above the head) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M142.4,72.4 Q160,59.2 177.6,72.4"/>
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M129.2,59.2 Q160,37.2 190.8,59.2"/>
+
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M116,46 Q160,15.2 204,46"/>
+</vector>
