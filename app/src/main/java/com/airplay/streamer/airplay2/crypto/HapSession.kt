@@ -1,5 +1,6 @@
 package com.airplay.streamer.airplay2.crypto
 
+import com.airplay.streamer.raop.WireConstants
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -11,8 +12,8 @@ import java.nio.ByteOrder
  */
 class HapSession {
     companion object {
-        const val FRAME_LENGTH = 1024
-        const val AUTH_TAG_LENGTH = 16
+        const val FRAME_LENGTH = WireConstants.Hap.FRAME_LENGTH
+        const val AUTH_TAG_LENGTH = WireConstants.Hap.AUTH_TAG_LENGTH
     }
     
     private var cipher: Chacha20Cipher? = null
@@ -93,12 +94,5 @@ class HapSession {
         }
         
         return result.toByteArray()
-    }
-    
-    /**
-     * Clear any buffered encrypted data
-     */
-    fun clearBuffer() {
-        encryptedBuffer = ByteArray(0)
     }
 }

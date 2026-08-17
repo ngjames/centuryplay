@@ -23,6 +23,7 @@ import com.airplay.streamer.airplay2.AirPlay2Client
 import com.airplay.streamer.airplay2.TimingMode
 import com.airplay.streamer.raop.RaopCapabilities
 import com.airplay.streamer.raop.RaopClient
+import com.airplay.streamer.raop.WireConstants
 import com.airplay.streamer.util.LogServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,15 +45,15 @@ class AudioCaptureService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "airplay_streaming"
 
-        private const val SAMPLE_RATE = 44100
+        private const val SAMPLE_RATE = WireConstants.AudioFormat.SAMPLE_RATE
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_STEREO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val FRAMES_PER_PACKET = 352
-        private const val BYTES_PER_FRAME = 4 // 16-bit stereo = 4 bytes
-        private const val BUFFER_SIZE = FRAMES_PER_PACKET * BYTES_PER_FRAME
+        private const val FRAMES_PER_PACKET = WireConstants.AudioFormat.FRAMES_PER_PACKET
+        private const val BYTES_PER_FRAME = WireConstants.AudioFormat.BYTES_PER_FRAME // 16-bit stereo = 4 bytes
+        private const val BUFFER_SIZE = WireConstants.AudioFormat.BYTES_PER_PACKET
 
-        private const val AP2_PORT = 7000
-        private const val HEALTH_CHECK_INTERVAL_MS = 10_000L
+        private const val AP2_PORT = WireConstants.Ports.AIRPLAY2
+        private const val HEALTH_CHECK_INTERVAL_MS = WireConstants.Timing.CAPTURE_SERVICE_HEALTH_CHECK_INTERVAL_MS
 
         const val ACTION_START = "com.airplay.streamer.START"
         const val ACTION_STOP = "com.airplay.streamer.STOP"

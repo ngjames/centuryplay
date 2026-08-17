@@ -24,6 +24,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.airplay.streamer.databinding.ActivityMainBinding
 import com.airplay.streamer.discovery.AirPlayDevice
 import com.airplay.streamer.raop.RaopCapabilities
+import com.airplay.streamer.raop.WireConstants
 import com.airplay.streamer.service.AudioCaptureService
 import com.airplay.streamer.service.Protocol
 import com.airplay.streamer.service.resolveProtocol
@@ -53,7 +54,7 @@ class MainActivity : AppCompatActivity() {
                 startStreamingService(result.resultCode, result.data!!, device)
             }
         } else {
-            Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.permission_denied), Toast.LENGTH_SHORT).show()
         }
         pendingDevice = null
         pendingProtocolPreference = -1
@@ -67,7 +68,7 @@ class MainActivity : AppCompatActivity() {
         if (allGranted) {
             pendingDevice?.let { requestMediaProjection(it) }
         } else {
-            Toast.makeText(this, "Permissions required for audio capture", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.permissions_required_audio), Toast.LENGTH_LONG).show()
             pendingDevice = null
             pendingProtocolPreference = -1
             pendingAp2Timing = -1
@@ -120,7 +121,7 @@ class MainActivity : AppCompatActivity() {
         
         if (hasPending) {
             val host = prefs.getString("manual_device_host", null)
-            val port = prefs.getInt("manual_device_port", 5000)
+            val port = prefs.getInt("manual_device_port", WireConstants.Ports.RAOP)
             
             if (host != null) {
                 val device = AirPlayDevice(
@@ -128,7 +129,7 @@ class MainActivity : AppCompatActivity() {
                     host = host,
                     port = port,
                     deviceId = "manual_$host",
-                    protocolVersion = if (port == 7000) 2 else 1
+                    protocolVersion = if (port == WireConstants.Ports.AIRPLAY2) 2 else 1
                 )
                 viewModel.addManualDevice(device)
                 viewModel.selectDevice(device)

@@ -2,6 +2,7 @@ package com.airplay.streamer.airplay2.timing
 
 import kotlinx.coroutines.*
 import com.airplay.streamer.airplay2.util.Ap2Log
+import com.airplay.streamer.raop.WireConstants
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -19,9 +20,9 @@ class PtpMasterClock(
     private val targetHost: String
 ) {
     companion object {
-        const val PTP_EVENT_PORT = 319
-        const val PTP_GENERAL_PORT = 320
-        const val SYNC_INTERVAL_MS = 125L // 8 messages per second
+        const val PTP_EVENT_PORT = WireConstants.Ports.PTP_EVENT
+        const val PTP_GENERAL_PORT = WireConstants.Ports.PTP_GENERAL
+        const val SYNC_INTERVAL_MS = WireConstants.Timing.PTP_SYNC_INTERVAL_MS
         
         // PTP Message Types
         const val MSG_SYNC = 0x00
@@ -33,6 +34,8 @@ class PtpMasterClock(
     
     private var socket319: DatagramSocket? = null
     private var socket320: DatagramSocket? = null
+    // Volatile: written by stop() (any thread) and read by runPtpLoop on IO.
+    @Volatile
     private var running = false
     private var job: Job? = null
     

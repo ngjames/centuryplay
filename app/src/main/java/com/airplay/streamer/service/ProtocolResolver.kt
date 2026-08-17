@@ -1,5 +1,7 @@
 package com.airplay.streamer.service
 
+import com.airplay.streamer.raop.WireConstants
+
 /**
  * Streaming protocol resolved from the user's protocol preference and the
  * receiver's ports. Pure logic (no android.* types) so it can be unit-tested
@@ -26,5 +28,5 @@ internal enum class Protocol { AIRPLAY1, AIRPLAY2 }
 internal fun resolveProtocol(preference: Int, port: Int, raopPort: Int?): Protocol = when (preference) {
     1 -> Protocol.AIRPLAY1
     2 -> Protocol.AIRPLAY2
-    else -> if (port == 7000) Protocol.AIRPLAY2 else Protocol.AIRPLAY1
+    else -> if (port == WireConstants.Ports.AIRPLAY2) Protocol.AIRPLAY2 else Protocol.AIRPLAY1
 }

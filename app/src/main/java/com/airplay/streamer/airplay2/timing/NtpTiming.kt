@@ -8,9 +8,6 @@ package com.airplay.streamer.airplay2.timing
  */
 internal object NtpTiming {
 
-    /** Samples per ALAC frame (352), matching AlacEncoder and the RTP stream. */
-    const val SAMPLES_PER_FRAME: Long = 352
-
     /**
      * Standard NTP offset formula:
      *   offset = ((t2 - t1) + (t3 - t4)) / 2

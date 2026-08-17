@@ -17,6 +17,7 @@ import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.airplay.streamer.raop.WireConstants
 
 class SettingsActivity : AppCompatActivity() {
 
@@ -203,7 +204,7 @@ class SettingsActivity : AppCompatActivity() {
         debugSection.visibility = if (debugEnabled) View.VISIBLE else View.GONE
 
         // Load saved host
-        manualHostInput.setText(prefs.getString(KEY_MANUAL_HOST, "192.168.1.100:5000"))
+        manualHostInput.setText(prefs.getString(KEY_MANUAL_HOST, "192.168.1.100:${WireConstants.Ports.RAOP}"))
 
         debugSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit { putBoolean(KEY_DEBUG_MODE, isChecked) }

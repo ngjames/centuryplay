@@ -10,22 +10,24 @@ import org.bouncycastle.crypto.params.ParametersWithIV
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import com.airplay.streamer.airplay2.util.Ap2Log
+import com.airplay.streamer.util.ByteArrayFormat.toHexString
 
 /**
  * ChaCha20-Poly1305 AEAD Cipher for AirPlay 2
  * 
  * Uses counter-based nonces (8-byte little-endian) for HAP/RTSP encryption.
+ *
+ * The auto-incrementing nonce counters are synchronized: concurrent encrypt /
+ * decrypt calls must never reuse a nonce (catastrophic for AEAD). The
+ * explicit-nonce overloads do not touch the counters and stay lock-free.
  */
 class Chacha20Cipher(
     private val encryptKey: ByteArray,
-    private val decryptKey: ByteArray,
-    private val nonceLength: Int = 8
+    private val decryptKey: ByteArray
 ) {
     init {
-        Ap2Log.log("Chacha20Cipher: Init outKey=${encryptKey.toHex().take(16)}... inKey=${decryptKey.toHex().take(16)}...")
+        Ap2Log.log("Chacha20Cipher: Init outKey=${encryptKey.toHexString().take(16)}... inKey=${decryptKey.toHexString().take(16)}...")
     }
-
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private var encryptCounter: Long = 0
     private var decryptCounter: Long = 0
@@ -44,6 +46,7 @@ class Chacha20Cipher(
     /**
      * Generate next nonce for encryption
      */
+    @Synchronized
     private fun nextEncryptNonce(): ByteArray {
         val nonce = ByteBuffer.allocate(8)
             .order(ByteOrder.LITTLE_ENDIAN)
@@ -55,6 +58,7 @@ class Chacha20Cipher(
     /**
      * Generate next nonce for decryption
      */
+    @Synchronized
     private fun nextDecryptNonce(): ByteArray {
         val nonce = ByteBuffer.allocate(8)
             .order(ByteOrder.LITTLE_ENDIAN)
@@ -75,7 +79,7 @@ class Chacha20Cipher(
      */
     fun encrypt(plaintext: ByteArray, nonce: ByteArray, aad: ByteArray? = null): ByteArray {
         val paddedNonce = if (nonce.size != 12) padNonce(nonce) else nonce
-        Ap2Log.log("Chacha20Cipher: Encrypt ${plaintext.size} bytes. Nonce=${paddedNonce.toHex()} AAD=${aad?.toHex() ?: "null"}")
+        Ap2Log.log("Chacha20Cipher: Encrypt ${plaintext.size} bytes. Nonce=${paddedNonce.toHexString()} AAD=${aad?.toHexString() ?: "null"}")
         return chacha20Poly1305Encrypt(encryptKey, paddedNonce, plaintext, aad ?: ByteArray(0))
     }
     

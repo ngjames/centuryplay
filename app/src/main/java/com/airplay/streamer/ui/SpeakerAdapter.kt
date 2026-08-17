@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.airplay.streamer.R
 import com.airplay.streamer.discovery.AirPlayDevice
+import com.airplay.streamer.raop.WireConstants
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
 
@@ -44,7 +45,7 @@ class SpeakerAdapter(
             speakerAddress.text = item.device.host.lowercase()
             
             // Show protocol version based on port
-            val isV2 = item.device.port == 7000
+            val isV2 = item.device.port == WireConstants.Ports.AIRPLAY2
             protocolBadge.text = if (isV2) "v2" else "v1"
 
             // Get Material colors

@@ -1,5 +1,7 @@
 package com.airplay.streamer.airplay2.audio
 
+import com.airplay.streamer.raop.WireConstants
+
 /**
  * ALAC (Apple Lossless Audio Codec) Encoder for AirPlay 2
  * 
@@ -14,10 +16,10 @@ object AlacEncoder {
     /**
      * Audio configuration
      */
-    const val SAMPLE_RATE = 44100
-    const val CHANNELS = 2
-    const val BITS_PER_SAMPLE = 16
-    const val SAMPLES_PER_FRAME = 352
+    const val SAMPLE_RATE = WireConstants.AudioFormat.SAMPLE_RATE
+    const val CHANNELS = WireConstants.AudioFormat.CHANNELS
+    const val BITS_PER_SAMPLE = WireConstants.AudioFormat.BITS_PER_SAMPLE
+    const val SAMPLES_PER_FRAME = WireConstants.AudioFormat.SAMPLES_PER_FRAME
     const val BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8
     const val BYTES_PER_FRAME = SAMPLES_PER_FRAME * CHANNELS * BYTES_PER_SAMPLE
     
