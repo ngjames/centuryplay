@@ -32,7 +32,9 @@ class DiscoveryRepository private constructor(context: Context) {
     }
 
     private val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-    private val discovery = AirPlayDiscovery(wifiManager)
+    private val connectivityManager =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    private val discovery = AirPlayDiscovery(wifiManager, connectivityManager)
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     private val _devices = MutableStateFlow<List<AirPlayDevice>>(emptyList())
@@ -56,23 +58,7 @@ class DiscoveryRepository private constructor(context: Context) {
             if (discoveryJob != null) return
             
             Log.d(TAG, "Starting persistent discovery (observers: $observerCount)")
-            discoveryJob = repositoryScope.launch {
-                discovery.discoverDevices().collect { event ->
-                    when (event) {
-                        is DiscoveryEvent.DeviceFound -> {
-                            val key = "${event.device.host}:${event.device.port}"
-                            discoveredMap[key] = event.device
-                            updateList()
-                        }
-                        is DiscoveryEvent.DeviceLost -> {
-                            val key = "${event.device.host}:${event.device.port}"
-                            discoveredMap.remove(key)
-                            updateList()
-                        }
-                        else -> {}
-                    }
-                }
-            }
+            launchDiscoveryCollection()
         }
     }
 
@@ -95,6 +81,31 @@ class DiscoveryRepository private constructor(context: Context) {
         }
     }
 
+    /**
+     * Launch (or relaunch) the single owner of the discovery-event -> state
+     * mapping. Used by [startDiscovery] and by [refresh]'s restart, so both
+     * paths cannot drift apart.
+     */
+    private fun launchDiscoveryCollection() {
+        discoveryJob = repositoryScope.launch {
+            discovery.discoverDevices().collect { event ->
+                when (event) {
+                    is DiscoveryEvent.DeviceFound -> {
+                        val key = "${event.device.host}:${event.device.port}"
+                        discoveredMap[key] = event.device
+                        updateList()
+                    }
+                    is DiscoveryEvent.DeviceLost -> {
+                        val key = "${event.device.host}:${event.device.port}"
+                        discoveredMap.remove(key)
+                        updateList()
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
+
     private fun updateList() {
         _devices.value = discoveredMap.values.toList()
     }
@@ -108,9 +119,12 @@ class DiscoveryRepository private constructor(context: Context) {
         discoveryJob = null
         discovery.stop()
         
-        // Restart if we still have observers
+        // Restart if we still have observers, without touching the observer
+        // count: launchDiscoveryCollection() does not bump it, so a single
+        // stopDiscovery() still balances every startDiscovery() call.
         if (observerCount > 0) {
-            startDiscovery()
+            Log.d(TAG, "Restarting discovery (observers: $observerCount)")
+            launchDiscoveryCollection()
         }
     }
 }

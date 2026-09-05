@@ -244,11 +244,12 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect { state ->
                     // Update speaker list
+                    val selected = state.selectedDevice
                     val items = state.devices.map { device ->
                         SpeakerAdapter.SpeakerItem(
                             device = device,
-                            isConnected = state.selectedDevice?.host == device.host &&
-                                         state.selectedDevice?.port == device.port
+                            isConnected = selected?.host == device.host &&
+                                         selected.port == device.port
                         )
                     }
                     speakerAdapter.submitList(items)

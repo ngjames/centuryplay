@@ -8,7 +8,6 @@ import com.dd.plist.BinaryPropertyListWriter
 import com.dd.plist.NSDictionary
 import com.dd.plist.PropertyListParser
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.math.BigInteger
 import java.net.InetAddress
@@ -289,9 +288,7 @@ class MockAp2Receiver {
     }
 
     private fun plistBytes(dict: NSDictionary): ByteArray {
-        val baos = ByteArrayOutputStream()
-        BinaryPropertyListWriter.write(baos, dict)
-        return baos.toByteArray()
+        return BinaryPropertyListWriter.writeToArray(dict)
     }
 
     private fun buildResponse(status: Int, cseq: String, contentType: String, body: ByteArray): ByteArray {

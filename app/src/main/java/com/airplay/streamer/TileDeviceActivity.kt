@@ -20,6 +20,8 @@ import com.airplay.streamer.databinding.ActivityTileDeviceBinding
 import com.airplay.streamer.discovery.AirPlayDevice
 import com.airplay.streamer.raop.RaopCapabilities
 import com.airplay.streamer.service.AudioCaptureService
+import com.airplay.streamer.service.Protocol
+import com.airplay.streamer.service.resolveProtocol
 import com.airplay.streamer.ui.MainViewModel
 import com.airplay.streamer.ui.SpeakerAdapter
 import com.google.android.material.color.DynamicColors
@@ -107,7 +109,14 @@ class TileDeviceActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionsAndStart(device: AirPlayDevice) {
-        if (RaopCapabilities.requiresUnsupportedFairPlay(device.features)) {
+        // Resolve the protocol exactly like MainActivity so both entry points
+        // pick the same streaming path for the same device.
+        val prefs = getSharedPreferences(SettingsActivity.PREFS_NAME, MODE_PRIVATE)
+        val protocolPref = prefs.getInt(SettingsActivity.KEY_PROTOCOL_PREFERENCE, 0)
+        val protocol = resolveProtocol(protocolPref, device.port, device.raopPort)
+        // FairPlay is only required on the RAOP (AirPlay 1) path; AirPlay 2
+        // audio does not need FairPlay, so AP2-only devices must not be gated.
+        if (protocol == Protocol.AIRPLAY1 && RaopCapabilities.requiresUnsupportedFairPlay(device.features)) {
             Toast.makeText(
                 this,
                 getString(R.string.fairplay_required_message, device.displayName),
@@ -146,7 +155,11 @@ class TileDeviceActivity : AppCompatActivity() {
             putExtra(AudioCaptureService.EXTRA_RESULT_CODE, resultCode)
             putExtra(AudioCaptureService.EXTRA_RESULT_DATA, data)
             putExtra(AudioCaptureService.EXTRA_HOST, device.host)
-            putExtra(AudioCaptureService.EXTRA_PORT, device.raopPort ?: device.port)
+            // Match MainActivity: EXTRA_PORT carries the AP2/control port and
+            // the RAOP port travels separately, so the service's protocol
+            // resolution (port == 7000) behaves identically from the tile.
+            putExtra(AudioCaptureService.EXTRA_PORT, device.port)
+            putExtra(AudioCaptureService.EXTRA_RAOP_PORT, device.raopPort ?: -1)
             putExtra(AudioCaptureService.EXTRA_DEVICE_NAME, device.displayName)
             putExtra(AudioCaptureService.EXTRA_DEVICE_FEATURES,
                 device.features.entries.joinToString(";") { "${it.key}=${it.value}" })

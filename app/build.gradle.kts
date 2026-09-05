@@ -29,6 +29,14 @@ android {
         }
     }
 
+    testOptions {
+        unitTests {
+            // Lets pure-JVM tests call android.util.Log etc. without
+            // Robolectric: stubbed methods return default values (null/0/false).
+            isReturnDefaultValues = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

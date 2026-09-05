@@ -115,8 +115,6 @@ class SettingsActivity : AppCompatActivity() {
         showNowPlayingSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("show_now_playing", isChecked).apply()
         }
-
-        setupGeneralSettings()
     }
 
     private fun setupGeneralSettings() {

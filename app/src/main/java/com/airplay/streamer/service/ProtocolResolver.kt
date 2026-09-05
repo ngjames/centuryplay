@@ -25,6 +25,7 @@ internal enum class Protocol { AIRPLAY1, AIRPLAY2 }
  * [raopPort] is the receiver's RAOP port (null for AP2-only devices); it does
  * not influence the Auto choice, which keys off [port] only.
  */
+@Suppress("UNUSED_PARAMETER") // raopPort kept for call-site symmetry; see KDoc
 internal fun resolveProtocol(preference: Int, port: Int, raopPort: Int?): Protocol = when (preference) {
     1 -> Protocol.AIRPLAY1
     2 -> Protocol.AIRPLAY2

@@ -41,9 +41,6 @@ class RtspClient(
     // Encryption state
     private val hapSession = HapSession()
     
-    // SRP state
-    private var srpClient: Srp6aClient? = null
-    
     // Feedback keepalive state
     private val feedbackActive = AtomicBoolean(false)
     

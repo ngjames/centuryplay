@@ -13,7 +13,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 
 /**
  * Integration test: drives the real [AirPlay2Client] through
@@ -58,9 +57,7 @@ class AirPlay2ClientIntegrationTest {
             assertEquals("shk must be 32 bytes", 32, (stream["shk"] as NSData).bytes().size)
 
             // --- bplist roundtrip: BinaryPropertyListWriter output reparses ---
-            val reencoded = ByteArrayOutputStream()
-                .also { BinaryPropertyListWriter.write(it, audioDict) }
-                .toByteArray()
+            val reencoded = BinaryPropertyListWriter.writeToArray(audioDict)
             val reparsed = PropertyListParser.parse(ByteArrayInputStream(reencoded)) as NSDictionary
             assertEquals(
                 audioDict.allKeys().map { it.toString() }.toSet(),

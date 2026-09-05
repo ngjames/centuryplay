@@ -184,12 +184,10 @@ class AirPlay2Client(
      * connection and require a 2xx response.
      */
     private fun sendSetup(body: NSDictionary, label: String = "SETUP"): RtspResponse {
-        val baos = ByteArrayOutputStream()
-        BinaryPropertyListWriter.write(baos, body)
         val response = rtspClient.sendRtsp(
             "SETUP",
             "rtsp://$host/$sessionUuid",
-            baos.toByteArray(),
+            BinaryPropertyListWriter.writeToArray(body),
             "application/x-apple-binary-plist"
         )
         if (response.statusCode != 200) {

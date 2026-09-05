@@ -55,7 +55,6 @@ class SpeakerAdapter(
             // Set stroke immediately without animation (prevents RecyclerView crash on rapid tapping)
             val targetStrokeWidth = if (item.isConnected) (3 * density).toInt() else 0
             
-            card.strokeColor = colorPrimary
             card.setStrokeColor(ColorStateList.valueOf(colorPrimary))
             
             // Set stroke width immediately (no animation to prevent RecyclerView conflicts)

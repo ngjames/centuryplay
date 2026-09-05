@@ -114,14 +114,12 @@ class RtpStreamer(
             controlSocket = null
         }
 
-        override fun sendData(data: ByteArray) {
-            val packet = DatagramPacket(data, data.size, targetAddress, dataPort)
-            dataSocket?.send(packet)
+        override fun sendData(packet: ByteArray) {
+            dataSocket?.send(DatagramPacket(packet, packet.size, targetAddress, dataPort))
         }
 
-        override fun sendControl(data: ByteArray) {
-            val packet = DatagramPacket(data, data.size, targetAddress, controlPort)
-            controlSocket?.send(packet)
+        override fun sendControl(packet: ByteArray) {
+            controlSocket?.send(DatagramPacket(packet, packet.size, targetAddress, controlPort))
         }
     }
 
