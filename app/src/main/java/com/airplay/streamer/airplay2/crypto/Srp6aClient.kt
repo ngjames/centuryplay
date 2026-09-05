@@ -9,6 +9,10 @@ import java.security.SecureRandom
  * 
  * Uses 3072-bit group from RFC 5054 with g=5 (Apple-specific).
  * For transient pairing, the PIN is always "3939".
+ *
+ * NOT thread-safe: the instance state (a/A/B/salt/S/K/M1) is mutated across
+ * [generateClientCredentials], [processChallenge] and [verifyServerProof].
+ * Single-coroutine usage only (the pairing flow is sequential).
  */
 class Srp6aClient(
     private val identity: ByteArray,

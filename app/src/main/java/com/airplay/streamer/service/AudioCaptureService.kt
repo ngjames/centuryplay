@@ -14,15 +14,17 @@ import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import com.airplay.streamer.MainActivity
 import com.airplay.streamer.R
 import com.airplay.streamer.airplay2.AirPlay2Client
 import com.airplay.streamer.airplay2.TimingMode
 import com.airplay.streamer.raop.RaopCapabilities
 import com.airplay.streamer.raop.RaopClient
+import com.airplay.streamer.raop.WireConstants
 import com.airplay.streamer.util.LogServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +34,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * Foreground service that captures system audio using MediaProjection/AudioPlaybackCapture
@@ -44,15 +45,15 @@ class AudioCaptureService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "airplay_streaming"
 
-        private const val SAMPLE_RATE = 44100
+        private const val SAMPLE_RATE = WireConstants.AudioFormat.SAMPLE_RATE
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_STEREO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val FRAMES_PER_PACKET = 352
-        private const val BYTES_PER_FRAME = 4 // 16-bit stereo = 4 bytes
-        private const val BUFFER_SIZE = FRAMES_PER_PACKET * BYTES_PER_FRAME
+        private const val FRAMES_PER_PACKET = WireConstants.AudioFormat.FRAMES_PER_PACKET
+        private const val BYTES_PER_FRAME = WireConstants.AudioFormat.BYTES_PER_FRAME // 16-bit stereo = 4 bytes
+        private const val BUFFER_SIZE = WireConstants.AudioFormat.BYTES_PER_PACKET
 
-        private const val AP2_PORT = 7000
-        private const val HEALTH_CHECK_INTERVAL_MS = 10_000L
+        private const val AP2_PORT = WireConstants.Ports.AIRPLAY2
+        private const val HEALTH_CHECK_INTERVAL_MS = WireConstants.Timing.CAPTURE_SERVICE_HEALTH_CHECK_INTERVAL_MS
 
         const val ACTION_START = "com.airplay.streamer.START"
         const val ACTION_STOP = "com.airplay.streamer.STOP"
@@ -105,7 +106,7 @@ class AudioCaptureService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-                val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+                val resultData = IntentCompat.getParcelableExtra(intent, EXTRA_RESULT_DATA, Intent::class.java)
                 val host = intent.getStringExtra(EXTRA_HOST)
                 val port = intent.getIntExtra(EXTRA_PORT, 0)
                 val raopPort = intent.getIntExtra(EXTRA_RAOP_PORT, -1).takeIf { it > 0 }
@@ -182,6 +183,15 @@ class AudioCaptureService : Service() {
 
                 if (RaopCapabilities.requiresUnsupportedFairPlay(deviceFeatures)) {
                     LogServer.log(getString(R.string.fairplay_required_message, deviceName))
+                    // Release the MediaProjection obtained above: stopSelf()
+                    // alone leaves the projection (and its screen-cast
+                    // indicator) alive until the process dies.
+                    try {
+                        mediaProjection?.stop()
+                    } catch (e: Exception) {
+                        LogServer.log("Error stopping MediaProjection: ${e.message}")
+                    }
+                    mediaProjection = null
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                     return@launch
@@ -233,16 +243,27 @@ class AudioCaptureService : Service() {
                 } else {
                     LogServer.log("Audio capture failed (possibly DRM blocked)")
                     stopCapture()
+                    stopSelf()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 LogServer.log("Streaming/Pairing Error: ${e.message}")
                 stopCapture()
+                stopSelf()
             }
         }
     }
 
     private fun tryAudioPlaybackCapture(): Boolean {
+        // RECORD_AUDIO is requested up-front by MainActivity/TileDeviceActivity,
+        // but the service can be (re)started by the system or the QS tile at any
+        // time; capture must never be attempted without the grant.
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            LogServer.log("Audio capture failed: RECORD_AUDIO not granted")
+            return false
+        }
         return try {
             val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection!!)
                 .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
@@ -414,8 +435,8 @@ class AudioCaptureService : Service() {
         // in the disconnect coroutines' finally blocks: a quick stop->start
         // otherwise lets the old coroutine's finally null out a freshly
         // assigned client, silently killing the new stream.
-        var raopToDisconnect: RaopClient? = null
-        var ap2ToDisconnect: AirPlay2Client? = null
+        var raopToDisconnect: RaopClient?
+        var ap2ToDisconnect: AirPlay2Client?
         synchronized(stopLock) {
             if (!isCapturing && raopClient == null && ap2Client == null) return // Already stopped
             isCapturing = false

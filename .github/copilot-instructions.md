@@ -19,12 +19,24 @@ app/src/main/java/com/airplay/streamer/
 ├── discovery/
 │   ├── AirPlayDevice.kt         # Data class for discovered devices
 │   └── AirPlayDiscovery.kt      # mDNS discovery using jmDNS
-├── raop/
-│   ├── RaopClient.kt            # AirPlay 1 (RTSP + RTP), fully working
-│   ├── AirPlay2Client.kt        # AirPlay 2 (HTTP + SRP), work in progress
-│   └── AlacEncoder.kt           # ALAC encoder (optional, not currently used)
+├── raop/                        # AirPlay 1 (RAOP) stack
+│   ├── RaopClient.kt            # RTSP + RTP session orchestration, fully working
+│   ├── RaopCapabilities.kt      # mDNS TXT capability parsing
+│   ├── RtspTransport.kt         # shared RTSP request/response layer
+│   ├── FairPlayHandshake.kt     # FairPlay SAPv2 /fp-setup stub
+│   ├── SdpBuilder.kt            # ANNOUNCE SDP body
+│   ├── RtpPacketBuilder.kt      # RTP/sync packet builders
+│   ├── NtpResponder.kt          # shared NTP timing responder
+│   └── WireConstants.kt         # centralized on-the-wire constants
+├── airplay2/                    # AirPlay 2 stack
+│   ├── AirPlay2Client.kt        # AP2 session orchestration (HTTP + SRP)
+│   ├── audio/                   # AlacEncoder, RtpStreamer
+│   ├── crypto/                  # SRP-6a, HAP/HKDF, ChaCha20 cipher
+│   ├── protocol/                # RtspClient, TransientPairing
+│   └── timing/                  # NtpTiming, PtpMasterClock
 ├── service/
-│   └── AudioCaptureService.kt   # Foreground service for AudioPlaybackCapture
+│   ├── AudioCaptureService.kt   # Foreground service for AudioPlaybackCapture
+│   └── ProtocolResolver.kt      # RAOP vs AP2 selection
 ├── ui/
 │   ├── MainViewModel.kt         # StateFlow-based state management
 │   ├── SpeakerAdapter.kt        # RecyclerView adapter for speaker list
@@ -70,7 +82,7 @@ See [docs/AIRPLAY_PROTOCOL.md](docs/AIRPLAY_PROTOCOL.md) for comprehensive refer
 
 ### AirPlay 2 - Work in Progress
 
-Located in `AirPlay2Client.kt`. Requires:
+Located in the `airplay2/` package (`AirPlay2Client.kt`). Requires:
 - HTTP control (port 7000)
 - SRP-6a pairing with PIN
 - Ed25519 + Curve25519 for encryption

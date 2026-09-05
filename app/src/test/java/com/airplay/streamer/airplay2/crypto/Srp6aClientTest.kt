@@ -1,5 +1,6 @@
 package com.airplay.streamer.airplay2.crypto
 
+import com.airplay.streamer.util.ByteArrayFormat.toHexString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -61,8 +62,6 @@ class Srp6aClientTest {
         "7B200CBBE117577A615D6C770988C0BAD946E208E24FA074E5AB3143DB5BFCE0FD108E4B82" +
         "D120A93AD2CAFFFFFFFFFFFFFFFF"
 
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
-
     @Test
     fun `uses RFC 5054 3072-bit group with g=5`() {
         assertEquals(rfc5054N3072Hex.lowercase(), Srp6aClient.N.toString(16))
@@ -85,10 +84,10 @@ class Srp6aClientTest {
 
         val (A, M1) = client.processChallenge(salt, serverB)
 
-        assertEquals(goldenA, A.toHex())
+        assertEquals(goldenA, A.toHexString())
         assertEquals(384, A.size)
-        assertEquals(goldenSessionK, client.K!!.toHex())
-        assertEquals(goldenM1, M1.toHex())
+        assertEquals(goldenSessionK, client.K!!.toHexString())
+        assertEquals(goldenM1, M1.toHexString())
         assertEquals(64, M1.size)
     }
 

@@ -1,5 +1,6 @@
 package com.airplay.streamer.service
 
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Build
@@ -23,6 +24,10 @@ class AirPlayTileService : TileService() {
         com.airplay.streamer.discovery.DiscoveryRepository.getInstance(this).stopDiscovery()
     }
 
+    // PendingIntent overload only exists on API 34+; below that the Intent
+    // overload is the only option (deprecated but required for minSdk 29).
+    @SuppressLint("StartActivityAndCollapseDeprecated")
+    @Suppress("DEPRECATION")
     override fun onClick() {
         super.onClick()
         val isStreaming = AudioCaptureService.instance?.isCurrentlyStreaming() == true
@@ -47,6 +52,9 @@ class AirPlayTileService : TileService() {
                 )
                 startActivityAndCollapse(pendingIntent)
             } else {
+                // PendingIntent overload only exists on API 34+; the Intent
+                // overload is the correct call below that (deprecated but
+                // required for minSdk 29).
                 startActivityAndCollapse(intent)
             }
         }

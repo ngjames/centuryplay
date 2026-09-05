@@ -43,4 +43,34 @@
     <string name="tile_disconnected">tap to stream</string>
     <string name="select_speaker">select speaker</string>
     <string name="speaker_hint">select a speaker to begin</string>
+
+    <!-- Phase 5: extracted UI strings -->
+    <string name="permission_denied">Permission denied</string>
+    <string name="permissions_required_audio">Permissions required for audio capture</string>
+    <string name="manual_device_name">Manual: %1$s</string>
+    <string name="manual_device_added">Manual device added: %1$s:%2$d</string>
+    <string name="switch_speaker_title">Switch Speaker?</string>
+    <string name="switch_speaker_message">This will stop streaming to the current speaker and switch to %1$s.</string>
+    <string name="switch_speaker_confirm">Switch</string>
+    <string name="select_speaker_first">Select a speaker first</string>
+    <string name="refreshing">Refreshing...</string>
+    <string name="auto_connecting">Auto-connecting to %1$s...</string>
+    <string name="unknown_title">unknown title</string>
+    <string name="unknown_artist">unknown artist</string>
+    <string name="waiting_for_music">waiting for music...</string>
+    <string name="play_something_hint">play something on spotify/music app</string>
+    <string name="streaming_status">streaming...</string>
+    <string name="permission_active">permission active</string>
+    <string name="permission_needed">permission needed</string>
+    <string name="could_not_open_settings">Could not open settings</string>
+    <string name="manual_device_default">192.168.1.100:5000</string>
+    <string name="invalid_format_ip_port">Invalid format. Use IP:Port</string>
+    <string name="manual_device_saved">Manual device saved: %1$s:%2$d\nGo back to connect</string>
+    <string name="invalid_input">Invalid input: %1$s</string>
+    <string name="could_not_open_browser">Could not open browser</string>
+
+    <plurals name="found_speakers">
+        <item quantity="one">found %d speaker</item>
+        <item quantity="other">found %d speakers</item>
+    </plurals>
 </resources>

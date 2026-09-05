@@ -1,5 +1,6 @@
 package com.airplay.streamer.airplay2.crypto
 
+import com.airplay.streamer.util.ByteArrayFormat.toHexString
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -14,10 +15,8 @@ import org.junit.Test
  */
 class Tlv8Test {
 
-    private fun hex(data: ByteArray): String = data.joinToString("") { "%02x".format(it) }
-
     private fun assertHexEquals(expected: String, actual: ByteArray) {
-        assertEquals(expected, hex(actual))
+        assertEquals(expected, actual.toHexString())
     }
 
     @Test
@@ -116,7 +115,7 @@ class Tlv8Test {
         val pair1 = Tlv8.Type.METHOD to byteArrayOf(0x00)
         val pair2 = Tlv8.Type.SEQ_NO to byteArrayOf(0x01)
         assertHexEquals(
-            hex(Tlv8.encode(mapOf(pair1, pair2))),
+            Tlv8.encode(mapOf(pair1, pair2)).toHexString(),
             Tlv8.encode(pair1, pair2)
         )
     }

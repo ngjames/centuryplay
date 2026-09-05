@@ -1,6 +1,7 @@
 package com.airplay.streamer.airplay2.audio
 
 import com.airplay.streamer.airplay2.crypto.Chacha20Cipher
+import com.airplay.streamer.raop.WireConstants
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -68,14 +69,14 @@ class RtpStreamer(
     }
 
     companion object {
-        const val SAMPLES_PER_FRAME = 352
-        const val SAMPLE_RATE = 44100
-        const val SSRC = 0x55667788
-        const val LATENCY_FRAMES = 77175
+        const val SAMPLES_PER_FRAME = WireConstants.AudioFormat.SAMPLES_PER_FRAME
+        const val SAMPLE_RATE = WireConstants.AudioFormat.SAMPLE_RATE
+        const val SSRC = WireConstants.Rtp.SSRC
+        const val LATENCY_FRAMES = WireConstants.Streaming.LATENCY_FRAMES
         /** ~1 second of audio (125 * 352 / 44100 ~= 0.998s). */
-        const val DEFAULT_PREBUFFER_FRAMES = 125
-        const val DEFAULT_PREBUFFER_TIMEOUT_MS = 2000L
-        private const val ANCHOR_INTERVAL_FRAMES = 125
+        const val DEFAULT_PREBUFFER_FRAMES = WireConstants.Streaming.PREBUFFER_FRAMES
+        const val DEFAULT_PREBUFFER_TIMEOUT_MS = WireConstants.Streaming.PREBUFFER_TIMEOUT_MS
+        private const val ANCHOR_INTERVAL_FRAMES = WireConstants.Streaming.ANCHOR_INTERVAL_FRAMES
     }
 
     private val cipher = Chacha20Cipher(sharedSecret, sharedSecret)
@@ -113,14 +114,12 @@ class RtpStreamer(
             controlSocket = null
         }
 
-        override fun sendData(data: ByteArray) {
-            val packet = DatagramPacket(data, data.size, targetAddress, dataPort)
-            dataSocket?.send(packet)
+        override fun sendData(packet: ByteArray) {
+            dataSocket?.send(DatagramPacket(packet, packet.size, targetAddress, dataPort))
         }
 
-        override fun sendControl(data: ByteArray) {
-            val packet = DatagramPacket(data, data.size, targetAddress, controlPort)
-            controlSocket?.send(packet)
+        override fun sendControl(packet: ByteArray) {
+            controlSocket?.send(DatagramPacket(packet, packet.size, targetAddress, controlPort))
         }
     }
 
@@ -228,8 +227,8 @@ class RtpStreamer(
     private fun sendAudioPacketNow(alacPayload: ByteArray, clockId: Long, sendAnchor: Boolean) {
         // RTP header (12 bytes): V=2, PT=96, seq (2B BE), ts (4B BE), ssrc (4B)
         val rtpHeader = ByteBuffer.allocate(12).order(ByteOrder.BIG_ENDIAN)
-        rtpHeader.put(0x80.toByte()) // V=2
-        rtpHeader.put(0x60.toByte()) // M=0, PT=96
+        rtpHeader.put(WireConstants.Rtp.VERSION_BYTE.toByte()) // V=2
+        rtpHeader.put(WireConstants.Rtp.PAYLOAD_TYPE.toByte()) // M=0, PT=96
         rtpHeader.putShort(sequenceNumber.toShort())
         rtpHeader.putInt(rtpTimestamp)
         rtpHeader.putInt(SSRC)

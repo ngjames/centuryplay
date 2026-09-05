@@ -19,8 +19,7 @@ class TransientPairing(
     private val rtspClient: RtspClient
 ) {
     private var srpClient: Srp6aClient? = null
-    var sessionKey: ByteArray? = null
-        private set
+    private var sessionKey: ByteArray? = null
     
     /**
      * Execute full transient pairing flow

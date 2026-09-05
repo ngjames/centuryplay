@@ -4,7 +4,8 @@ import android.util.Log
 import java.io.PrintWriter
 import java.net.ServerSocket
 import java.net.Socket
-import java.text.SimpleDateFormat
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.concurrent.thread
@@ -18,10 +19,15 @@ object LogServer {
     private const val PORT = 8080
     private const val MAX_LOGS = 500
     
-    private val logs = ConcurrentLinkedQueue<String>()
+    // Bounded and thread-safe; internal so JVM tests can assert on entries.
+    internal val logs = ConcurrentLinkedQueue<String>()
     private var serverSocket: ServerSocket? = null
     private var running = false
-    private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+
+    // DateTimeFormatter is immutable and thread-safe (SimpleDateFormat is not,
+    // and log() is called from many threads: service, coroutines, listeners).
+    private val dateFormat: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.US)
     
     fun start() {
         if (running) return
@@ -53,7 +59,7 @@ object LogServer {
     }
     
     fun log(message: String) {
-        val timestamp = dateFormat.format(Date())
+        val timestamp = dateFormat.format(LocalTime.now())
         val entry = "[$timestamp] $message"
         logs.add(entry)
         Log.d(TAG, message)

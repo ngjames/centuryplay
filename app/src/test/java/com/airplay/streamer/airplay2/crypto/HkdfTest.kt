@@ -1,5 +1,6 @@
 package com.airplay.streamer.airplay2.crypto
 
+import com.airplay.streamer.util.ByteArrayFormat.toHexString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -27,7 +28,7 @@ class HkdfTest {
         val derived = Hkdf.Control.deriveOutputKey(ikm)
         assertEquals("deriveOutputKey must be 32 bytes", 32, derived.size)
         assertEquals("HKDF-SHA512 Control-Write-Encryption-Key mismatch",
-            goldenOutputKey.toHex(), derived.toHex())
+            goldenOutputKey.toHexString(), derived.toHexString())
     }
 
     @Test
@@ -35,26 +36,24 @@ class HkdfTest {
         val derived = Hkdf.Control.deriveInputKey(ikm)
         assertEquals("deriveInputKey must be 32 bytes", 32, derived.size)
         assertEquals("HKDF-SHA512 Control-Read-Encryption-Key mismatch",
-            goldenInputKey.toHex(), derived.toHex())
+            goldenInputKey.toHexString(), derived.toHexString())
     }
 
     @Test
     fun outputAndInputKeysDiffer() {
         val output = Hkdf.Control.deriveOutputKey(ikm)
         val input = Hkdf.Control.deriveInputKey(ikm)
-        assertNotEquals("write and read keys must differ", output.toHex(), input.toHex())
+        assertNotEquals("write and read keys must differ", output.toHexString(), input.toHexString())
     }
 
     @Test
     fun derivationIsDeterministic() {
         assertEquals(
-            Hkdf.Control.deriveOutputKey(ikm).toHex(),
-            Hkdf.Control.deriveOutputKey(ikm).toHex()
+            Hkdf.Control.deriveOutputKey(ikm).toHexString(),
+            Hkdf.Control.deriveOutputKey(ikm).toHexString()
         )
     }
 
     private fun hex(s: String): ByteArray =
         s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 }

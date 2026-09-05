@@ -2,6 +2,7 @@ package com.airplay.streamer.airplay2.protocol
 
 import com.airplay.streamer.airplay2.crypto.*
 import com.airplay.streamer.airplay2.util.Ap2Log
+import com.airplay.streamer.raop.WireConstants
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -18,7 +19,7 @@ import kotlin.coroutines.coroutineContext
  */
 class RtspClient(
     private val host: String,
-    private val port: Int = 7000
+    private val port: Int = WireConstants.Ports.AIRPLAY2
 ) {
     companion object {
         internal val AIRPLAY_HEADERS = mapOf(
@@ -37,15 +38,8 @@ class RtspClient(
     var cseq = 0
         private set
     
-    // Last protocol error (null when the last request/response was healthy).
-    var lastError: String? = null
-        private set
-    
     // Encryption state
     private val hapSession = HapSession()
-    
-    // SRP state
-    private var srpClient: Srp6aClient? = null
     
     // Feedback keepalive state
     private val feedbackActive = AtomicBoolean(false)
@@ -70,7 +64,7 @@ class RtspClient(
      */
     fun connect() {
         socket = Socket(host, port).apply {
-            soTimeout = 10000
+            soTimeout = WireConstants.Timing.RTSP_SO_TIMEOUT_MS
             keepAlive = true
         }
         input = socket!!.getInputStream()
@@ -81,10 +75,18 @@ class RtspClient(
      * Disconnect from the receiver
      */
     fun disconnect() {
+        // The stream null-out is serialized under requestLock so an in-flight
+        // sendRtsp cycle never sees a nulled input/output (readResponse
+        // dereferences `input!!`). The socket is closed BEFORE taking the
+        // lock so a concurrent blocking read is unblocked with a
+        // SocketException instead of making disconnect wait up to the 10s
+        // soTimeout while holding the lock.
         socket?.close()
-        socket = null
-        input = null
-        output = null
+        synchronized(requestLock) {
+            socket = null
+            input = null
+            output = null
+        }
     }
     
     /**
@@ -138,19 +140,11 @@ class RtspClient(
             }
             output!!.flush()
 
-            val response = try {
-                readResponse()
-            } catch (e: RtspException) {
-                lastError = e.message
-                throw e
-            }
+            val response = readResponse()
 
-            // Non-2xx: record + log a typed failure; callers decide how to surface it.
+            // Non-2xx: log a typed failure; callers decide how to surface it.
             if (response.statusCode !in 200..299) {
-                lastError = "$method $path failed: HTTP ${response.statusCode}"
-                Ap2Log.e("RtspClient", lastError!!)
-            } else {
-                lastError = null
+                Ap2Log.e("RtspClient", "$method $path failed: HTTP ${response.statusCode}")
             }
 
             response
@@ -160,8 +154,8 @@ class RtspClient(
     /**
      * Send a single /feedback keepalive post.
      * 
-     * Returns true on 2xx; returns false (and sets [lastError]) instead of
-     * throwing so a failed keepalive can never kill the stream.
+     * Returns true on 2xx; returns false instead of throwing so a failed
+     * keepalive can never kill the stream.
      */
     fun sendFeedbackOnce(volume: Float = 0f): Boolean {
         return try {
@@ -174,13 +168,11 @@ class RtspClient(
             )
             val ok = response.statusCode in 200..299
             if (!ok) {
-                lastError = "POST /feedback failed: HTTP ${response.statusCode}"
-                Ap2Log.e("RtspClient", lastError!!)
+                Ap2Log.e("RtspClient", "POST /feedback failed: HTTP ${response.statusCode}")
             }
             ok
         } catch (e: Exception) {
-            lastError = "POST /feedback failed: ${e.message}"
-            Ap2Log.e("RtspClient", lastError!!, e)
+            Ap2Log.e("RtspClient", "POST /feedback failed: ${e.message}", e)
             false
         }
     }
@@ -282,7 +274,7 @@ class RtspClient(
 /**
  * Typed transport/protocol failure raised by [RtspClient] on connection
  * problems (EOF, timeouts). Non-2xx HTTP/RTSP responses never throw: they are
- * returned as [RtspResponse] with [RtspClient.lastError] set.
+ * returned as [RtspResponse] for the caller to inspect.
  */
 class RtspException(message: String, cause: Throwable? = null) : Exception(message, cause)
 

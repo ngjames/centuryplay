@@ -55,15 +55,4 @@ object NetworkUtils {
         }
         return null
     }
-    
-    /**
-     * Generate a random MAC-like address for device identification.
-     * Format: XX:XX:XX:XX:XX:XX
-     */
-    fun generateDeviceId(): String {
-        val random = java.security.SecureRandom()
-        val bytes = ByteArray(6)
-        random.nextBytes(bytes)
-        return bytes.joinToString(":") { "%02X".format(it) }
-    }
 }

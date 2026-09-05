@@ -7,7 +7,9 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import javax.jmdns.JmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
@@ -39,7 +41,8 @@ data class AirPlayDevice(
  * - AirPlay 2: _airplay._tcp.local. (port 7000)
  */
 class AirPlayDiscovery(
-    private val wifiManager: WifiManager
+    private val wifiManager: WifiManager,
+    private val connectivityManager: android.net.ConnectivityManager
 ) {
     companion object {
         private const val AIRPLAY_SERVICE_TYPE = "_airplay._tcp.local."  // AirPlay 2
@@ -57,23 +60,17 @@ class AirPlayDiscovery(
      * Start discovering AirPlay devices. Returns a Flow that emits discovery events.
      */
     fun discoverDevices(): Flow<DiscoveryEvent> = callbackFlow {
-        // Acquire multicast lock to receive mDNS packets
-        multicastLock = wifiManager.createMulticastLock("airplay_discovery").apply {
-            setReferenceCounted(true)
-            acquire()
+        // Get local IP address. Selection ladder in [LocalIpv4Selector]; the
+        // legacy WifiManager call is the last resort (deprecated on API 31+).
+        val localAddress = withContext(Dispatchers.IO) {
+            val ipBytes = resolveLocalIpv4() ?: legacyWifiIpv4() ?: return@withContext null
+            InetAddress.getByAddress(ipBytes)
         }
 
-        // Get local IP address
-        val localAddress = withContext(Dispatchers.IO) {
-            val wifiInfo = wifiManager.connectionInfo
-            val ipInt = wifiInfo.ipAddress
-            val ipBytes = byteArrayOf(
-                (ipInt and 0xff).toByte(),
-                (ipInt shr 8 and 0xff).toByte(),
-                (ipInt shr 16 and 0xff).toByte(),
-                (ipInt shr 24 and 0xff).toByte()
-            )
-            InetAddress.getByAddress(ipBytes)
+        if (localAddress == null) {
+            Log.e(TAG, "No local IPv4 address available; cannot start mDNS discovery")
+            trySend(DiscoveryEvent.DiscoveryFailed("no local IPv4 address available"))
+            return@callbackFlow
         }
 
         // Create jmDNS instance. JmDNS.create can throw on some Android
@@ -92,6 +89,14 @@ class AirPlayDiscovery(
             return@callbackFlow
         }
         jmDNS = createdJmDns
+
+        // Acquire the multicast lock only once mDNS exists: every failure
+        // return before this point would otherwise leak it (awaitClose never
+        // runs when the callbackFlow block exits early).
+        multicastLock = wifiManager.createMulticastLock("airplay_discovery").apply {
+            setReferenceCounted(true)
+            acquire()
+        }
 
         // Listener for AirPlay 2 services (_airplay._tcp)
         val airplay2Listener = object : ServiceListener {
@@ -184,6 +189,75 @@ class AirPlayDiscovery(
             multicastLock = null
             discoveredDevices.clear()
         }
+    }
+
+    /**
+     * Collect IPv4 candidates (default network first, then every up,
+     * non-loopback interface) and run them through [LocalIpv4Selector] so
+     * VPN-over-Wi-Fi advertises the real LAN address, not the tun one.
+     */
+    private fun resolveLocalIpv4(): ByteArray? {
+        val candidates = mutableListOf<LocalIpv4Selector.Candidate>()
+
+        // 1) Default network's LinkProperties, non-deprecated and reliable
+        // under MAC randomization. Skipped silently on SecurityException.
+        try {
+            val la = connectivityManager.activeNetwork
+                ?.let { connectivityManager.getLinkProperties(it) }
+            la?.linkAddresses?.forEach { linkAddr ->
+                val addr = linkAddr.address
+                if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                    candidates.add(
+                        LocalIpv4Selector.Candidate(
+                            fromDefaultNetwork = true,
+                            interfaceName = la.interfaceName ?: "",
+                            ip = addr.address
+                        )
+                    )
+                }
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "ConnectivityManager lookup failed: ${e.message}")
+        }
+
+        // 2) Every up, non-loopback interface, preserving enumeration order.
+        runCatching {
+            NetworkInterface.getNetworkInterfaces()?.asSequence()
+                ?.filter { it.isUp && !it.isLoopback }
+                ?.forEach { intf ->
+                    intf.inetAddresses.asSequence()
+                        .filterIsInstance<Inet4Address>()
+                        .forEach { addr ->
+                            candidates.add(
+                                LocalIpv4Selector.Candidate(
+                                    fromDefaultNetwork = false,
+                                    interfaceName = intf.name,
+                                    ip = addr.address
+                                )
+                            )
+                        }
+                }
+        }
+
+        return LocalIpv4Selector.select(candidates)
+    }
+
+    /** Last-resort legacy WifiManager lookup (deprecated on API 31+). */
+    private fun legacyWifiIpv4(): ByteArray? {
+        val ipInt = try {
+            @Suppress("DEPRECATION")
+            wifiManager.connectionInfo.ipAddress
+        } catch (e: Exception) {
+            Log.w(TAG, "WifiManager lookup failed: ${e.message}")
+            0
+        }
+        if (ipInt == 0) return null
+        return byteArrayOf(
+            (ipInt and 0xff).toByte(),
+            (ipInt shr 8 and 0xff).toByte(),
+            (ipInt shr 16 and 0xff).toByte(),
+            (ipInt shr 24 and 0xff).toByte()
+        )
     }
 
     private fun parseServiceEvent(event: ServiceEvent, isRaop: Boolean): AirPlayDevice? {
